@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "image": {
+    "file": "../images/ko_004.png",
+    "width": 686,
+    "height": 994,
+    "source_language": "ko",
+    "series_alias": "primary-series",
+    "notes": "Three irregular speech bubbles around one action panel."
+  },
+  "regions": [
+    {
+      "id": "region-001",
+      "bbox": [334, 123, 143, 75],
+      "region_type": "dialogue",
+      "reading_order": 0,
+      "source_text": "형님아! 괜찮냐?!",
+      "acceptable_english": "Hyungnim! Are you okay?!",
+      "alternate_english": ["Bro! Are you okay?!"],
+      "notes": "Human review confirmed both the retained Korean address Hyungnim and the localized Bro are acceptable."
+    },
+    {
+      "id": "region-002",
+      "bbox": [196, 286, 153, 112],
+      "region_type": "dialogue",
+      "reading_order": 1,
+      "source_text": "저 새끼 뭐야?! 죽고싶냐?!",
+      "acceptable_english": "Who the hell is that bastard?! Does he want to die?!",
+      "notes": "Aggressive colloquial dialogue."
+    },
+    {
+      "id": "region-003",
+      "bbox": [290, 728, 233, 128],
+      "region_type": "dialogue",
+      "reading_order": 2,
+      "source_text": "니네들은 끼어들지말고 구경이나 해!!",
+      "acceptable_english": "You guys stay out of it and just watch!!",
+      "notes": ""
+    }
+  ]
+}

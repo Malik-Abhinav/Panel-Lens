@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "image": {
+    "file": "../images/ko_001.png",
+    "width": 650,
+    "height": 1448,
+    "source_language": "ko",
+    "series_alias": "primary-series",
+    "notes": "Three dialogue bubbles over two vertically separated panels."
+  },
+  "regions": [
+    {
+      "id": "region-001",
+      "bbox": [252, 113, 211, 142],
+      "region_type": "dialogue",
+      "reading_order": 0,
+      "source_text": "안돼요! 환자분! 잠시만요!!",
+      "acceptable_english": "No! Wait, patient! Just a moment!!",
+      "notes": "Bold text in an irregular speech bubble."
+    },
+    {
+      "id": "region-002",
+      "bbox": [190, 705, 276, 166],
+      "region_type": "dialogue",
+      "reading_order": 1,
+      "source_text": "담당 선생님께서\n입원 수속 진행\n시켜드리라고\n말씀을...!",
+      "acceptable_english": "The doctor in charge told me to proceed with your admission...!",
+      "notes": "Line breaks preserve the text layout visible in the image. Hospital context; 선생님 refers to the doctor."
+    },
+    {
+      "id": "region-003",
+      "bbox": [332, 1254, 197, 124],
+      "region_type": "dialogue",
+      "reading_order": 2,
+      "source_text": "수납은 여기서 하면 되죠?",
+      "acceptable_english": "I can make the payment here, right?",
+      "notes": "Human review confirmed that 수납 refers to making the payment here."
+    }
+  ]
+}

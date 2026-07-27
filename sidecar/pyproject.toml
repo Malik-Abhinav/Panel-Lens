@@ -1,0 +1,9 @@
+[project]
+name = "panellens-sidecar"
+version = "0.1.0"
+description = "Local OCR and translation sidecar for PanelLens"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

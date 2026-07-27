@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "image": {
+    "file": "../images/ko_005.png",
+    "width": 620,
+    "height": 1066,
+    "source_language": "ko",
+    "series_alias": "secondary-series",
+    "notes": "Different series with narration, thinner font, dark artwork, and excluded red sound effects."
+  },
+  "regions": [
+    {
+      "id": "region-001",
+      "bbox": [157, 129, 313, 62],
+      "region_type": "narration",
+      "reading_order": 0,
+      "source_text": "내게서 공급되는 마력은 쓰지 않겠다는 고집인가?",
+      "acceptable_english": "Are you insisting that you won't use the mana supplied by me?",
+      "notes": "Human review confirmed that 마력 refers to mana here."
+    },
+    {
+      "id": "region-002",
+      "bbox": [277, 884, 202, 65],
+      "region_type": "narration",
+      "reading_order": 1,
+      "source_text": "삐져도 단단히 삐졌구만.",
+      "acceptable_english": "You're really sulking now.",
+      "notes": "The three red 쾅 sound effects are intentionally excluded from the MVP answer key."
+    }
+  ]
+}

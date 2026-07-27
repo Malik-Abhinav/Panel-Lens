@@ -1,0 +1,37 @@
+# macOS
+.DS_Store
+
+# Xcode user state and build output
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Local logs and model artifacts
+*.log
+models/
+.cache/
+
+# Generated OCR benchmark artifacts
+experiments/results/
+
+# Permission-sensitive/copyrighted evaluation images
+evaluation/korean/images/*.png
+evaluation/korean/images/*.jpg
+evaluation/korean/images/*.jpeg
+evaluation/korean/images/*.webp
+evaluation/chinese/images/*.png
+evaluation/chinese/images/*.jpg
+evaluation/chinese/images/*.jpeg
+evaluation/chinese/images/*.webp
+
+# Keep instructions in ignored image directories
+!evaluation/korean/images/README.md
+!evaluation/chinese/images/README.md

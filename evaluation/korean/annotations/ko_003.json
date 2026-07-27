@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "image": {
+    "file": "../images/ko_003.png",
+    "width": 668,
+    "height": 1210,
+    "source_language": "ko",
+    "series_alias": "primary-series",
+    "notes": "Three regions including a very short exertion utterance."
+  },
+  "regions": [
+    {
+      "id": "region-001",
+      "bbox": [244, 156, 233, 99],
+      "region_type": "dialogue",
+      "reading_order": 0,
+      "source_text": "그놈을 찾아낸건가?!",
+      "acceptable_english": "Did he find that guy?!",
+      "notes": ""
+    },
+    {
+      "id": "region-002",
+      "bbox": [329, 498, 77, 46],
+      "region_type": "dialogue",
+      "reading_order": 1,
+      "source_text": "큭...",
+      "acceptable_english": "Ngh...",
+      "notes": "Short exertion or pain utterance."
+    },
+    {
+      "id": "region-003",
+      "bbox": [291, 986, 190, 93],
+      "region_type": "dialogue",
+      "reading_order": 2,
+      "source_text": "뭐지? 이 새끼?!",
+      "acceptable_english": "What the hell is with this bastard?!",
+      "notes": "Aggressive colloquial dialogue."
+    }
+  ]
+}
+

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "image": {
+    "file": "../images/ko_001.png",
+    "source_language": "ko",
+    "series_alias": "primary-series",
+    "notes": ""
+  },
+  "regions": [
+    {
+      "id": "region-001",
+      "bbox": [0, 0, 100, 100],
+      "region_type": "dialogue",
+      "reading_order": 0,
+      "source_text": "TYPE THE KOREAN TEXT HERE",
+      "acceptable_english": "Type an acceptable translation here",
+      "notes": ""
+    }
+  ]
+}
+
