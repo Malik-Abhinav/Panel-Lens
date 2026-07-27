@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "image": {
+    "file": "../images/ko_002.png",
+    "width": 614,
+    "height": 1392,
+    "source_language": "ko",
+    "series_alias": "primary-series",
+    "notes": "Two dialogue regions with a named character and colloquial language."
+  },
+  "regions": [
+    {
+      "id": "region-001",
+      "bbox": [186, 106, 267, 181],
+      "region_type": "dialogue",
+      "reading_order": 0,
+      "source_text": "근데 지대호 이 자식은 왜 이렇게 전화를 안 받아...?!",
+      "acceptable_english": "But why isn't that bastard Ji Dae-ho answering his phone...?!",
+      "notes": "Human review confirmed 지대호 as the character name; use Ji Dae-ho consistently."
+    },
+    {
+      "id": "region-002",
+      "bbox": [205, 1168, 252, 91],
+      "region_type": "dialogue",
+      "reading_order": 1,
+      "source_text": "이 무식한 놈이 설마 벌써...",
+      "acceptable_english": "That idiot couldn't have already...",
+      "notes": "Sentence intentionally trails off."
+    }
+  ]
+}

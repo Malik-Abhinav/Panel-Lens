@@ -1,0 +1,7 @@
+# Install PaddlePaddle separately from its official CPU wheel index:
+# python -m pip install paddlepaddle==3.2.0 \
+#   -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+paddleocr==3.7.0
+numpy==2.3.5
+Pillow==12.1.0
+
