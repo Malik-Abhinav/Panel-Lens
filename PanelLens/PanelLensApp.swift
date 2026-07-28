@@ -9,6 +9,11 @@ struct PanelLensApp: App {
             MenuBarContent(appState: appState)
         }
 
+        Window("Select Browser Window", id: "window-picker") {
+            WindowPickerView(appState: appState)
+        }
+        .defaultSize(width: 620, height: 460)
+
         Settings {
             SettingsView()
         }
