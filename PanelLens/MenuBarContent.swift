@@ -31,6 +31,19 @@ struct MenuBarContent: View {
             }
         }
 
+        Button(
+            appState.isOverlayVisible
+                ? "Hide Test Overlay"
+                : "Show Test Overlay"
+        ) {
+            if appState.isOverlayVisible {
+                appState.hideOverlay()
+            } else {
+                appState.showTestOverlay()
+            }
+        }
+        .disabled(appState.selectedWindowID == nil)
+
         if !appState.hasScreenCapturePermission {
             Button("Open Screen Recording Settings…") {
                 appState.openScreenRecordingSettings()
