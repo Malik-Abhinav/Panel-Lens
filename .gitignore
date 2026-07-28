@@ -19,6 +19,9 @@ __pycache__/
 models/
 .cache/
 
+# Local project planning context
+PLAN.md
+
 # Generated OCR benchmark artifacts
 experiments/results/
 
