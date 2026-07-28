@@ -31,10 +31,13 @@ final class AppState: ObservableObject {
     @Published private(set) var isLoadingWindows = false
     @Published private(set) var message = "Select a browser window to begin."
     @Published private(set) var lastCaptureURL: URL?
+    @Published private(set) var isOverlayVisible = false
     @Published private(set) var hasScreenCapturePermission =
         CGPreflightScreenCaptureAccess()
 
     private var selectedWindow: SCWindow?
+    private let overlayController = OverlayController()
+    private var windowTrackingTask: Task<Void, Never>?
 
     var canCapture: Bool {
         selectedWindow != nil && status != .working
@@ -45,15 +48,7 @@ final class AppState: ObservableObject {
 
         hasScreenCapturePermission = CGPreflightScreenCaptureAccess()
         if !hasScreenCapturePermission {
-            let requestAccepted = CGRequestScreenCaptureAccess()
-            hasScreenCapturePermission =
-                requestAccepted || CGPreflightScreenCaptureAccess()
-        }
-
-        guard hasScreenCapturePermission else {
-            status = .error
-            message = "macOS still reports Screen Recording as off for PanelLens. Enable it, then completely stop and rerun the app."
-            return
+            _ = CGRequestScreenCaptureAccess()
         }
 
         isLoadingWindows = true
@@ -68,6 +63,11 @@ final class AppState: ObservableObject {
                 true,
                 onScreenWindowsOnly: true
             )
+
+            // The CoreGraphics preflight value can remain stale after the user
+            // enables permission. A successful ScreenCaptureKit request is the
+            // authoritative signal that capture access is available.
+            hasScreenCapturePermission = true
 
             let ownBundleIdentifier = Bundle.main.bundleIdentifier
             availableWindows = content.windows
@@ -107,7 +107,11 @@ final class AppState: ObservableObject {
             }
             status = .idle
         } catch {
-            present(error: error, action: "Loading windows")
+            hasScreenCapturePermission = CGPreflightScreenCaptureAccess()
+            status = .error
+            message = hasScreenCapturePermission
+                ? "Loading windows failed: \(error.localizedDescription)"
+                : "Screen Recording access is unavailable. Enable PanelLens in Privacy & Security, quit PanelLens completely, then run it again."
         }
     }
 
@@ -117,6 +121,36 @@ final class AppState: ObservableObject {
         selectedWindowDescription = "\(option.applicationName) — \(option.title)"
         message = "Ready to capture \(option.applicationName)."
         status = .idle
+
+        if isOverlayVisible {
+            overlayController.show(over: option.frame)
+            startTrackingWindow()
+        }
+    }
+
+    func showTestOverlay() {
+        guard let selectedWindow else {
+            status = .error
+            message = "Select a browser window before showing the overlay."
+            return
+        }
+
+        overlayController.show(over: selectedWindow.frame)
+        isOverlayVisible = true
+        startTrackingWindow()
+        status = .idle
+        message = "Test overlay is aligned with \(selectedWindowDescription)."
+    }
+
+    func hideOverlay() {
+        windowTrackingTask?.cancel()
+        windowTrackingTask = nil
+        overlayController.hide()
+        isOverlayVisible = false
+        status = .idle
+        message = selectedWindow == nil
+            ? "Select a browser window to begin."
+            : "Overlay hidden."
     }
 
     func bringWindowPickerForward() async {
@@ -199,6 +233,45 @@ final class AppState: ObservableObject {
         }
 
         NSWorkspace.shared.open(settingsURL)
+    }
+
+    private func startTrackingWindow() {
+        windowTrackingTask?.cancel()
+
+        guard let selectedWindowID else {
+            return
+        }
+
+        windowTrackingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                if let frame = Self.windowFrame(for: selectedWindowID) {
+                    self?.overlayController.updateFrame(frame)
+                }
+
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+    }
+
+    nonisolated private static func windowFrame(
+        for windowID: CGWindowID
+    ) -> CGRect? {
+        guard
+            let windowInfo = CGWindowListCopyWindowInfo(
+                [.optionIncludingWindow, .excludeDesktopElements],
+                windowID
+            ) as? [[String: Any]],
+            let entry = windowInfo.first,
+            let boundsDictionary = entry[
+                kCGWindowBounds as String
+            ] as? NSDictionary
+        else {
+            return nil
+        }
+
+        return CGRect(
+            dictionaryRepresentation: boundsDictionary as CFDictionary
+        )
     }
 
     private func saveDebugCapture(_ image: CGImage) throws -> URL {
