@@ -5,6 +5,12 @@ import ImageIO
 import ScreenCaptureKit
 import UniformTypeIdentifiers
 
+struct DisplayTranslation: Identifiable {
+    let id = UUID()
+    let original: String
+    let translation: String
+}
+
 @MainActor
 final class AppState: ObservableObject {
     enum Status: String {
@@ -35,6 +41,7 @@ final class AppState: ObservableObject {
     @Published private(set) var sidecarState: SidecarState = .stopped
     @Published private(set) var sidecarMessage = "Python sidecar has not started."
     @Published private(set) var recognizedTexts: [String] = []
+    @Published private(set) var translations: [DisplayTranslation] = []
     @Published private(set) var hasReadingArea = false
     @Published private(set) var hasScreenCapturePermission =
         CGPreflightScreenCaptureAccess()
@@ -65,11 +72,17 @@ final class AppState: ObservableObject {
                     )
                 } else {
                     recognizedTexts = regions.map(\.original)
+                    translations = regions.map {
+                        DisplayTranslation(
+                            original: $0.original,
+                            translation: $0.translation
+                        )
+                    }
                     let processingDescription = response.processingTimeMS.map {
                         " in \(String(format: "%.1f", Double($0) / 1_000))s"
                     } ?? ""
                     message =
-                        "OCR found \(regions.count) Korean text block(s)\(processingDescription)."
+                        "Translated \(regions.count) Korean text block(s)\(processingDescription)."
                 }
             } else if let error = response.error {
                 sidecarMessage = "IPC test failed."
@@ -171,6 +184,7 @@ final class AppState: ObservableObject {
         normalizedReadingArea = nil
         hasReadingArea = false
         recognizedTexts = []
+        translations = []
         status = .idle
 
         if isOverlayVisible {
@@ -213,6 +227,7 @@ final class AppState: ObservableObject {
 
         isOverlayVisible = false
         recognizedTexts = []
+        translations = []
         startTrackingWindow()
         overlayController.selectReadingArea(
             over: selectedWindow.frame,
@@ -243,6 +258,7 @@ final class AppState: ObservableObject {
         normalizedReadingArea = nil
         hasReadingArea = false
         recognizedTexts = []
+        translations = []
         message = "Reading area cleared. Captures will use the full window."
     }
 

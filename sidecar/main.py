@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 from ocr_pipeline import recognize_korean
+from translation_pipeline import TranslationError, translate_korean_regions
 
 PROTOCOL_VERSION = 1
 logging.basicConfig(
@@ -32,6 +33,7 @@ def respond(payload: dict[str, Any]) -> None:
 def handle(
     message: dict[str, Any],
     ocr_handler: Any = recognize_korean,
+    translation_handler: Any = translate_korean_regions,
 ) -> dict[str, Any]:
     request_id = message.get("request_id")
     message_type = message.get("type")
@@ -87,6 +89,25 @@ def handle(
                     "status": "error",
                     "error": {
                         "code": "ocr_failed",
+                        "message": str(error),
+                    },
+                }
+
+            try:
+                regions = translation_handler(
+                    regions,
+                    str(message.get("series", "")),
+                )
+            except TranslationError as error:
+                logging.exception(
+                    "Translation failed for request %s", request_id
+                )
+                return {
+                    "protocol_version": PROTOCOL_VERSION,
+                    "request_id": request_id,
+                    "status": "error",
+                    "error": {
+                        "code": error.code,
                         "message": str(error),
                     },
                 }
