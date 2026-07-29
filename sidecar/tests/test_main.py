@@ -48,6 +48,9 @@ def test_translate_returns_fake_region() -> None:
     assert result["type"] == "translation"
     assert result["request_id"] == "translate-1"
     assert result["received_image_bytes"] == 8
+    assert result["cache_hit"] is False
+    assert result["ocr_processing_time_ms"] >= 0
+    assert result["translation_processing_time_ms"] >= 0
     assert result["regions"] == [
         {
             "bbox": [10, 20, 30, 40],
@@ -164,3 +167,59 @@ def test_group_ocr_lines_combines_wrapped_dialogue() -> None:
     assert groups[0]["original"] == "안돼요! 환자분! 잠시만요!!"
     assert groups[0]["line_count"] == 3
     assert groups[1]["original"] == "담당 선생님께서"
+
+
+def test_group_ocr_lines_combines_adjacent_fragments_on_same_row() -> None:
+    lines = [
+        {
+            "bbox": [105, 61, 88, 45],
+            "original": "담당'",
+            "translation": "",
+            "language": "ko",
+            "confidence": 0.97,
+        },
+        {
+            "bbox": [177, 62, 179, 42],
+            "original": "선생님께서",
+            "translation": "",
+            "language": "ko",
+            "confidence": 0.99,
+        },
+    ]
+
+    groups = group_ocr_lines(lines)
+
+    assert len(groups) == 1
+    assert groups[0]["original"] == "담당' 선생님께서"
+
+
+def test_group_ocr_lines_does_not_merge_tall_distant_sound_effect() -> None:
+    lines = [
+        {
+            "bbox": [90, 1048, 224, 48],
+            "original": "병원비 더럽게",
+            "translation": "",
+            "language": "ko",
+            "confidence": 0.99,
+        },
+        {
+            "bbox": [138, 1091, 133, 49],
+            "original": "비싸네..",
+            "translation": "",
+            "language": "ko",
+            "confidence": 0.99,
+        },
+        {
+            "bbox": [33, 1245, 114, 110],
+            "original": "저벅",
+            "translation": "",
+            "language": "ko",
+            "confidence": 0.90,
+        },
+    ]
+
+    groups = group_ocr_lines(lines)
+
+    assert len(groups) == 2
+    assert groups[0]["original"] == "병원비 더럽게 비싸네.."
+    assert groups[1]["original"] == "저벅"

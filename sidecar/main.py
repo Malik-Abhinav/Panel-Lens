@@ -7,17 +7,29 @@ to stderr or a log file.
 from __future__ import annotations
 
 import base64
+import copy
+import hashlib
 import json
 import logging
 import os
 import sys
+import threading
 import time
+from collections import OrderedDict
 from typing import Any
 
 from ocr_pipeline import recognize_korean
-from translation_pipeline import TranslationError, translate_korean_regions
+from translation_pipeline import (
+    TranslationError,
+    translate_korean_regions,
+    warm_translation_model,
+)
 
 PROTOCOL_VERSION = 1
+RESULT_CACHE_SIZE = max(
+    1, int(os.environ.get("PANELLENS_RESULT_CACHE_SIZE", "8"))
+)
+_result_cache: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
 logging.basicConfig(
     filename=os.environ.get("PANELLENS_SIDECAR_LOG", "/tmp/panellens-sidecar.log"),
     level=logging.INFO,
@@ -28,6 +40,33 @@ logging.basicConfig(
 def respond(payload: dict[str, Any]) -> None:
     sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
     sys.stdout.flush()
+
+
+def _cache_key(image_bytes: bytes, series: str) -> str:
+    digest = hashlib.sha256()
+    digest.update(image_bytes)
+    digest.update(b"\0")
+    digest.update(series.strip().encode("utf-8"))
+    return digest.hexdigest()
+
+
+def _cached_regions(key: str) -> list[dict[str, Any]] | None:
+    regions = _result_cache.get(key)
+    if regions is None:
+        return None
+
+    _result_cache.move_to_end(key)
+    return copy.deepcopy(regions)
+
+
+def _store_cached_regions(
+    key: str,
+    regions: list[dict[str, Any]],
+) -> None:
+    _result_cache[key] = copy.deepcopy(regions)
+    _result_cache.move_to_end(key)
+    while len(_result_cache) > RESULT_CACHE_SIZE:
+        _result_cache.popitem(last=False)
 
 
 def handle(
@@ -48,6 +87,9 @@ def handle(
 
     if message_type == "translate":
         started = time.perf_counter()
+        ocr_processing_time_ms = 0
+        translation_processing_time_ms = 0
+        cache_hit = False
         encoded_image = message.get("image_base64", "")
         try:
             image_bytes = base64.b64decode(encoded_image, validate=True)
@@ -79,38 +121,58 @@ def handle(
                 }
             ]
         else:
-            try:
-                regions = ocr_handler(image_bytes)
-            except Exception as error:
-                logging.exception("Korean OCR failed for request %s", request_id)
-                return {
-                    "protocol_version": PROTOCOL_VERSION,
-                    "request_id": request_id,
-                    "status": "error",
-                    "error": {
-                        "code": "ocr_failed",
-                        "message": str(error),
-                    },
-                }
+            series = str(message.get("series", ""))
+            use_result_cache = (
+                ocr_handler is recognize_korean
+                and translation_handler is translate_korean_regions
+            )
+            key = _cache_key(image_bytes, series)
+            regions = _cached_regions(key) if use_result_cache else None
+            cache_hit = regions is not None
 
-            try:
-                regions = translation_handler(
-                    regions,
-                    str(message.get("series", "")),
+            if regions is None:
+                ocr_started = time.perf_counter()
+                try:
+                    regions = ocr_handler(image_bytes)
+                except Exception as error:
+                    logging.exception(
+                        "Korean OCR failed for request %s", request_id
+                    )
+                    return {
+                        "protocol_version": PROTOCOL_VERSION,
+                        "request_id": request_id,
+                        "status": "error",
+                        "error": {
+                            "code": "ocr_failed",
+                            "message": str(error),
+                        },
+                    }
+                ocr_processing_time_ms = round(
+                    (time.perf_counter() - ocr_started) * 1000
                 )
-            except TranslationError as error:
-                logging.exception(
-                    "Translation failed for request %s", request_id
+
+                translation_started = time.perf_counter()
+                try:
+                    regions = translation_handler(regions, series)
+                except TranslationError as error:
+                    logging.exception(
+                        "Translation failed for request %s", request_id
+                    )
+                    return {
+                        "protocol_version": PROTOCOL_VERSION,
+                        "request_id": request_id,
+                        "status": "error",
+                        "error": {
+                            "code": error.code,
+                            "message": str(error),
+                        },
+                    }
+                translation_processing_time_ms = round(
+                    (time.perf_counter() - translation_started) * 1000
                 )
-                return {
-                    "protocol_version": PROTOCOL_VERSION,
-                    "request_id": request_id,
-                    "status": "error",
-                    "error": {
-                        "code": error.code,
-                        "message": str(error),
-                    },
-                }
+
+                if use_result_cache:
+                    _store_cached_regions(key, regions)
 
         return {
             "protocol_version": PROTOCOL_VERSION,
@@ -121,6 +183,9 @@ def handle(
             "processing_time_ms": round(
                 (time.perf_counter() - started) * 1000
             ),
+            "ocr_processing_time_ms": ocr_processing_time_ms,
+            "translation_processing_time_ms": translation_processing_time_ms,
+            "cache_hit": cache_hit,
             "received_image_bytes": len(image_bytes),
         }
 
@@ -137,6 +202,11 @@ def handle(
 
 def main() -> None:
     logging.info("PanelLens sidecar started with protocol version %s", PROTOCOL_VERSION)
+    threading.Thread(
+        target=_warm_translation_model,
+        name="translation-model-warmup",
+        daemon=True,
+    ).start()
     for line in sys.stdin:
         try:
             message = json.loads(line)
@@ -156,6 +226,17 @@ def main() -> None:
                     },
                 }
             )
+
+
+def _warm_translation_model() -> None:
+    started = time.perf_counter()
+    if warm_translation_model():
+        logging.info(
+            "Translation model warmed in %.1f seconds",
+            time.perf_counter() - started,
+        )
+    else:
+        logging.info("Translation model warm-up skipped because Ollama is unavailable")
 
 
 if __name__ == "__main__":

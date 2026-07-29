@@ -33,6 +33,9 @@ struct SidecarResponse: Decodable {
     let type: String?
     let regions: [SidecarRegion]?
     let processingTimeMS: Int?
+    let ocrProcessingTimeMS: Int?
+    let translationProcessingTimeMS: Int?
+    let cacheHit: Bool?
     let error: SidecarError?
 
     enum CodingKeys: String, CodingKey {
@@ -41,6 +44,9 @@ struct SidecarResponse: Decodable {
         case type
         case regions
         case processingTimeMS = "processing_time_ms"
+        case ocrProcessingTimeMS = "ocr_processing_time_ms"
+        case translationProcessingTimeMS = "translation_processing_time_ms"
+        case cacheHit = "cache_hit"
         case error
     }
 }
