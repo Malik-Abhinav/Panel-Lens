@@ -56,12 +56,31 @@ def _belongs_to_group(
     left, top, width, height = line["bbox"]
     right = left + width
     vertical_gap = top - group_bottom
+    group_average_height = (
+        sum(item["bbox"][3] for item in group) / len(group)
+    )
     reference_height = max(
-        height,
-        sum(item["bbox"][3] for item in group) / len(group),
+        group_average_height,
+        min(height, group_average_height * 1.5),
     )
     if vertical_gap < -reference_height or vertical_gap > reference_height:
         return False
+
+    vertical_overlap = max(
+        0.0,
+        min(group_bottom, top + height) - max(group_top, top),
+    )
+    minimum_height = max(1.0, min(group_bottom - group_top, height))
+    horizontal_gap = max(
+        0.0,
+        max(left - group_right, group_left - right),
+    )
+    same_text_row = (
+        vertical_overlap / minimum_height >= 0.5
+        and horizontal_gap <= reference_height * 0.75
+    )
+    if same_text_row:
+        return True
 
     overlap = max(0.0, min(group_right, right) - max(group_left, left))
     minimum_width = max(1.0, min(group_right - group_left, width))
@@ -147,6 +166,11 @@ class KoreanOCRPipeline:
             texts, scores, polygons, strict=True
         ):
             normalized_text = str(text).strip()
+            normalized_text = re.sub(
+                r"(?<=[가-힣])['’]$",
+                "",
+                normalized_text,
+            )
             confidence = float(score)
             if (
                 confidence < MINIMUM_CONFIDENCE

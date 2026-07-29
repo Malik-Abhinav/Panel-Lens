@@ -78,20 +78,32 @@ final class AppState: ObservableObject {
                             translation: $0.translation
                         )
                     }
-                    let processingDescription = response.processingTimeMS.map {
-                        " in \(String(format: "%.1f", Double($0) / 1_000))s"
-                    } ?? ""
-                    message =
-                        "Translated \(regions.count) Korean text block(s)\(processingDescription)."
+                    status = .idle
+                    if response.cacheHit == true {
+                        message =
+                            "Reused \(regions.count) cached translation(s) instantly."
+                    } else {
+                        let ocrSeconds = Double(
+                            response.ocrProcessingTimeMS ?? 0
+                        ) / 1_000
+                        let translationSeconds = Double(
+                            response.translationProcessingTimeMS ?? 0
+                        ) / 1_000
+                        message =
+                            "Translated \(regions.count) block(s). OCR: "
+                            + "\(String(format: "%.1f", ocrSeconds))s, translation: "
+                            + "\(String(format: "%.1f", translationSeconds))s."
+                    }
                 }
             } else if let error = response.error {
-                sidecarMessage = "IPC test failed."
                 if response.requestID?.hasPrefix("test-") == true {
+                    sidecarMessage = "IPC test failed."
                     presentSidecarTestAlert(
                         title: "Python Sidecar Test Failed",
                         message: error.message
                     )
                 } else {
+                    sidecarMessage = "Translation failed."
                     status = .error
                     message = "Python processing failed: \(error.message)"
                 }
@@ -332,9 +344,8 @@ final class AppState: ObservableObject {
 
             lastCaptureURL = captureURL
             sidecarClient.translate(imageData: captureData)
-            status = .idle
             message =
-                "Captured \(imageForOCR.width)×\(imageForOCR.height) px reading area and sent it to Python."
+                "Reading Korean and translating locally…"
         } catch {
             present(error: error, action: "Capturing the selected window")
         }
