@@ -13,6 +13,18 @@ struct SidecarRegion: Decodable {
     let translation: String
     let language: String
     let confidence: Double
+    let tone: String?
+    let translationConfidence: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case bbox
+        case original
+        case translation
+        case language
+        case confidence
+        case tone
+        case translationConfidence = "translation_confidence"
+    }
 }
 
 struct SidecarResponse: Decodable {

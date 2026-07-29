@@ -23,18 +23,22 @@ struct MenuBarContent: View {
             appState.sidecarState == .error ? .red : .secondary
         )
 
-        if !appState.recognizedTexts.isEmpty {
+        if !appState.translations.isEmpty {
             Divider()
 
-            Text("Detected Korean Blocks")
+            Text("Translations")
                 .font(.caption.weight(.semibold))
 
-            ForEach(
-                Array(appState.recognizedTexts.prefix(6).enumerated()),
-                id: \.offset
-            ) { _, text in
-                Text(text)
-                    .lineLimit(1)
+            ForEach(appState.translations.prefix(6)) { item in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.original)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+
+                    Text(item.translation)
+                        .lineLimit(2)
+                }
             }
         }
 

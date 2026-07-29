@@ -2,6 +2,7 @@ import base64
 
 from main import handle
 from ocr_pipeline import group_ocr_lines
+from translation_pipeline import TranslationError
 
 
 def test_ping_returns_pong() -> None:
@@ -33,6 +34,14 @@ def test_translate_returns_fake_region() -> None:
                 "confidence": 0.98,
             }
         ],
+        translation_handler=lambda regions, _: [
+            {
+                **regions[0],
+                "translation": "Hello",
+                "tone": "casual",
+                "translation_confidence": 0.97,
+            }
+        ],
     )
 
     assert result["status"] == "ok"
@@ -43,9 +52,11 @@ def test_translate_returns_fake_region() -> None:
         {
             "bbox": [10, 20, 30, 40],
             "original": "안녕",
-            "translation": "",
+            "translation": "Hello",
             "language": "ko",
             "confidence": 0.98,
+            "tone": "casual",
+            "translation_confidence": 0.97,
         }
     ]
 
@@ -80,6 +91,38 @@ def test_translate_reports_ocr_failure() -> None:
     assert result["error"] == {
         "code": "ocr_failed",
         "message": "model failed",
+    }
+
+
+def test_translate_reports_ollama_offline() -> None:
+    def fail_translation(
+        _: list[dict[str, object]],
+        __: str,
+    ) -> list[dict[str, object]]:
+        raise TranslationError("ollama_offline", "Ollama is offline")
+
+    result = handle(
+        {
+            "type": "translate",
+            "request_id": "translation-error",
+            "image_base64": base64.b64encode(b"image").decode("ascii"),
+        },
+        ocr_handler=lambda _: [
+            {
+                "bbox": [1, 2, 3, 4],
+                "original": "안녕",
+                "translation": "",
+                "language": "ko",
+                "confidence": 0.99,
+            }
+        ],
+        translation_handler=fail_translation,
+    )
+
+    assert result["status"] == "error"
+    assert result["error"] == {
+        "code": "ollama_offline",
+        "message": "Ollama is offline",
     }
 
 
