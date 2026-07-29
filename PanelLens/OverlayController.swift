@@ -28,6 +28,24 @@ final class OverlayController {
     }
 
     func show(over windowFrame: CGRect) {
+        panel.ignoresMouseEvents = true
+        panel.contentView = NSHostingView(rootView: TestOverlayView())
+        updateFrame(windowFrame)
+        panel.orderFrontRegardless()
+    }
+
+    func selectReadingArea(
+        over windowFrame: CGRect,
+        onComplete: @escaping (CGRect, CGSize) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        panel.ignoresMouseEvents = false
+        panel.contentView = NSHostingView(
+            rootView: ReadingAreaSelectionView(
+                onComplete: onComplete,
+                onCancel: onCancel
+            )
+        )
         updateFrame(windowFrame)
         panel.orderFrontRegardless()
     }
@@ -41,6 +59,7 @@ final class OverlayController {
     }
 
     func hide() {
+        panel.ignoresMouseEvents = true
         panel.orderOut(nil)
     }
 
@@ -82,6 +101,95 @@ final class OverlayController {
             width: coreGraphicsFrame.width,
             height: coreGraphicsFrame.height
         )
+    }
+}
+
+private struct ReadingAreaSelectionView: View {
+    let onComplete: (CGRect, CGSize) -> Void
+    let onCancel: () -> Void
+
+    @State private var dragStart: CGPoint?
+    @State private var selection: CGRect?
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Rectangle()
+                    .fill(Color.black.opacity(0.42))
+                    .contentShape(Rectangle())
+                    .gesture(selectionGesture)
+
+                if let selection {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.12))
+                        .overlay {
+                            Rectangle()
+                                .stroke(Color.cyan, lineWidth: 3)
+                        }
+                        .frame(
+                            width: selection.width,
+                            height: selection.height
+                        )
+                        .position(
+                            x: selection.midX,
+                            y: selection.midY
+                        )
+                        .allowsHitTesting(false)
+                }
+
+                VStack {
+                    Text("Drag around only the manhwa reader")
+                        .font(.headline)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .background(.black.opacity(0.8))
+                        .foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .padding(.top, 18)
+
+                    Spacer()
+
+                    HStack {
+                        Button("Cancel") {
+                            onCancel()
+                        }
+
+                        Button("Use Selected Area") {
+                            guard let selection else { return }
+                            onComplete(selection, geometry.size)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!hasUsableSelection)
+                    }
+                    .padding(12)
+                    .background(.black.opacity(0.8))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .padding(.bottom, 18)
+                }
+            }
+        }
+    }
+
+    private var selectionGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                let start = dragStart ?? value.startLocation
+                dragStart = start
+                selection = CGRect(
+                    x: min(start.x, value.location.x),
+                    y: min(start.y, value.location.y),
+                    width: abs(value.location.x - start.x),
+                    height: abs(value.location.y - start.y)
+                )
+            }
+            .onEnded { _ in
+                dragStart = nil
+            }
+    }
+
+    private var hasUsableSelection: Bool {
+        guard let selection else { return false }
+        return selection.width >= 100 && selection.height >= 100
     }
 }
 

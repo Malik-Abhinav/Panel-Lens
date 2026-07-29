@@ -34,6 +34,8 @@ final class AppState: ObservableObject {
     @Published private(set) var isOverlayVisible = false
     @Published private(set) var sidecarState: SidecarState = .stopped
     @Published private(set) var sidecarMessage = "Python sidecar has not started."
+    @Published private(set) var recognizedTexts: [String] = []
+    @Published private(set) var hasReadingArea = false
     @Published private(set) var hasScreenCapturePermission =
         CGPreflightScreenCaptureAccess()
 
@@ -41,6 +43,7 @@ final class AppState: ObservableObject {
     private let overlayController = OverlayController()
     private let sidecarClient = SidecarClient()
     private var windowTrackingTask: Task<Void, Never>?
+    private var normalizedReadingArea: CGRect?
 
     init() {
         sidecarClient.onStateChange = { [weak self] state, message in
@@ -61,8 +64,12 @@ final class AppState: ObservableObject {
                         message: resultMessage
                     )
                 } else {
+                    recognizedTexts = regions.map(\.original)
+                    let processingDescription = response.processingTimeMS.map {
+                        " in \(String(format: "%.1f", Double($0) / 1_000))s"
+                    } ?? ""
                     message =
-                        "Python received the screenshot and returned \(regions.count) placeholder region(s)."
+                        "OCR found \(regions.count) Korean text block(s)\(processingDescription)."
                 }
             } else if let error = response.error {
                 sidecarMessage = "IPC test failed."
@@ -161,6 +168,9 @@ final class AppState: ObservableObject {
         selectedWindowID = option.id
         selectedWindowDescription = "\(option.applicationName) — \(option.title)"
         message = "Ready to capture \(option.applicationName)."
+        normalizedReadingArea = nil
+        hasReadingArea = false
+        recognizedTexts = []
         status = .idle
 
         if isOverlayVisible {
@@ -192,6 +202,48 @@ final class AppState: ObservableObject {
         message = selectedWindow == nil
             ? "Select a browser window to begin."
             : "Overlay hidden."
+    }
+
+    func selectReadingArea() {
+        guard let selectedWindow else {
+            status = .error
+            message = "Select a browser window before choosing a reading area."
+            return
+        }
+
+        isOverlayVisible = false
+        recognizedTexts = []
+        startTrackingWindow()
+        overlayController.selectReadingArea(
+            over: selectedWindow.frame,
+            onComplete: { [weak self] selection, canvasSize in
+                guard let self else { return }
+
+                normalizedReadingArea = CGRect(
+                    x: selection.minX / canvasSize.width,
+                    y: selection.minY / canvasSize.height,
+                    width: selection.width / canvasSize.width,
+                    height: selection.height / canvasSize.height
+                )
+                hasReadingArea = true
+                finishReadingAreaSelection(
+                    message: "Reading area saved. Only that part of the webpage will be OCRed."
+                )
+            },
+            onCancel: { [weak self] in
+                self?.finishReadingAreaSelection(
+                    message: "Reading area selection cancelled."
+                )
+            }
+        )
+        message = "Drag around only the visible manhwa reader."
+    }
+
+    func clearReadingArea() {
+        normalizedReadingArea = nil
+        hasReadingArea = false
+        recognizedTexts = []
+        message = "Reading area cleared. Captures will use the full window."
     }
 
     func testSidecar() {
@@ -258,14 +310,15 @@ final class AppState: ObservableObject {
                 contentFilter: filter,
                 configuration: configuration
             )
-            let captureURL = try saveDebugCapture(image)
+            let imageForOCR = try cropToReadingArea(image)
+            let captureURL = try saveDebugCapture(imageForOCR)
             let captureData = try Data(contentsOf: captureURL)
 
             lastCaptureURL = captureURL
             sidecarClient.translate(imageData: captureData)
             status = .idle
             message =
-                "Captured \(image.width)×\(image.height) px and sent it to Python."
+                "Captured \(imageForOCR.width)×\(imageForOCR.height) px reading area and sent it to Python."
         } catch {
             present(error: error, action: "Capturing the selected window")
         }
@@ -297,6 +350,45 @@ final class AppState: ObservableObject {
         alert.informativeText = message
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    private func finishReadingAreaSelection(message: String) {
+        windowTrackingTask?.cancel()
+        windowTrackingTask = nil
+        overlayController.hide()
+        status = .idle
+        self.message = message
+    }
+
+    private func cropToReadingArea(_ image: CGImage) throws -> CGImage {
+        guard let normalizedReadingArea else {
+            return image
+        }
+
+        let imageBounds = CGRect(
+            x: 0,
+            y: 0,
+            width: image.width,
+            height: image.height
+        )
+        let pixelRect = CGRect(
+            x: normalizedReadingArea.minX * CGFloat(image.width),
+            y: normalizedReadingArea.minY * CGFloat(image.height),
+            width: normalizedReadingArea.width * CGFloat(image.width),
+            height: normalizedReadingArea.height * CGFloat(image.height)
+        )
+        .integral
+        .intersection(imageBounds)
+
+        guard
+            pixelRect.width > 0,
+            pixelRect.height > 0,
+            let croppedImage = image.cropping(to: pixelRect)
+        else {
+            throw CaptureError.couldNotCropReadingArea
+        }
+
+        return croppedImage
     }
 
     private func startTrackingWindow() {
@@ -425,12 +517,15 @@ private enum BrowserIdentifiers {
 
 private enum CaptureError: LocalizedError {
     case couldNotCreateImageDestination
+    case couldNotCropReadingArea
     case couldNotWriteImage
 
     var errorDescription: String? {
         switch self {
         case .couldNotCreateImageDestination:
             "PanelLens could not create the PNG destination."
+        case .couldNotCropReadingArea:
+            "PanelLens could not crop the selected reading area."
         case .couldNotWriteImage:
             "PanelLens could not finish writing the PNG."
         }
