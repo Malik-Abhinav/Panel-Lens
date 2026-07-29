@@ -14,6 +14,30 @@ struct MenuBarContent: View {
             .font(.caption)
             .foregroundStyle(appState.status == .error ? .red : .secondary)
 
+        Label(
+            appState.sidecarMessage,
+            systemImage: sidecarStatusImage
+        )
+        .font(.caption)
+        .foregroundStyle(
+            appState.sidecarState == .error ? .red : .secondary
+        )
+
+        if !appState.recognizedTexts.isEmpty {
+            Divider()
+
+            Text("Detected Korean Blocks")
+                .font(.caption.weight(.semibold))
+
+            ForEach(
+                Array(appState.recognizedTexts.prefix(6).enumerated()),
+                id: \.offset
+            ) { _, text in
+                Text(text)
+                    .lineLimit(1)
+            }
+        }
+
         Divider()
 
         Button("Translate Visible Area") {
@@ -32,6 +56,21 @@ struct MenuBarContent: View {
         }
 
         Button(
+            appState.hasReadingArea
+                ? "Change Reading Area…"
+                : "Select Reading Area…"
+        ) {
+            appState.selectReadingArea()
+        }
+        .disabled(appState.selectedWindowID == nil)
+
+        if appState.hasReadingArea {
+            Button("Use Full Browser Window") {
+                appState.clearReadingArea()
+            }
+        }
+
+        Button(
             appState.isOverlayVisible
                 ? "Hide Test Overlay"
                 : "Show Test Overlay"
@@ -43,6 +82,14 @@ struct MenuBarContent: View {
             }
         }
         .disabled(appState.selectedWindowID == nil)
+
+        Button(
+            appState.sidecarState == .ready
+                ? "Test Python Sidecar"
+                : "Start Python Sidecar"
+        ) {
+            appState.testSidecar()
+        }
 
         if !appState.hasScreenCapturePermission {
             Button("Open Screen Recording Settings…") {
@@ -67,5 +114,18 @@ struct MenuBarContent: View {
             NSApplication.shared.terminate(nil)
         }
         .keyboardShortcut("q")
+    }
+
+    private var sidecarStatusImage: String {
+        switch appState.sidecarState {
+        case .stopped:
+            "stop.circle"
+        case .starting:
+            "hourglass.circle"
+        case .ready:
+            "checkmark.circle"
+        case .error:
+            "exclamationmark.triangle"
+        }
     }
 }
