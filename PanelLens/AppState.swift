@@ -32,12 +32,53 @@ final class AppState: ObservableObject {
     @Published private(set) var message = "Select a browser window to begin."
     @Published private(set) var lastCaptureURL: URL?
     @Published private(set) var isOverlayVisible = false
+    @Published private(set) var sidecarState: SidecarState = .stopped
+    @Published private(set) var sidecarMessage = "Python sidecar has not started."
     @Published private(set) var hasScreenCapturePermission =
         CGPreflightScreenCaptureAccess()
 
     private var selectedWindow: SCWindow?
     private let overlayController = OverlayController()
+    private let sidecarClient = SidecarClient()
     private var windowTrackingTask: Task<Void, Never>?
+
+    init() {
+        sidecarClient.onStateChange = { [weak self] state, message in
+            self?.sidecarState = state
+            self?.sidecarMessage = message
+        }
+        sidecarClient.onResponse = { [weak self] response in
+            guard let self else { return }
+
+            if let regions = response.regions {
+                if response.requestID?.hasPrefix("test-") == true {
+                    let resultMessage =
+                        "Swift received \(regions.count) fake translation region(s) from Python."
+                    message = resultMessage
+                    sidecarMessage = "IPC test passed."
+                    presentSidecarTestAlert(
+                        title: "Python Sidecar Test Passed",
+                        message: resultMessage
+                    )
+                } else {
+                    message =
+                        "Python received the screenshot and returned \(regions.count) placeholder region(s)."
+                }
+            } else if let error = response.error {
+                sidecarMessage = "IPC test failed."
+                if response.requestID?.hasPrefix("test-") == true {
+                    presentSidecarTestAlert(
+                        title: "Python Sidecar Test Failed",
+                        message: error.message
+                    )
+                } else {
+                    status = .error
+                    message = "Python processing failed: \(error.message)"
+                }
+            }
+        }
+        sidecarClient.start()
+    }
 
     var canCapture: Bool {
         selectedWindow != nil && status != .working
@@ -153,6 +194,15 @@ final class AppState: ObservableObject {
             : "Overlay hidden."
     }
 
+    func testSidecar() {
+        if sidecarState == .error || sidecarState == .stopped {
+            sidecarClient.start()
+        } else {
+            sidecarMessage = "Waiting for Python test response…"
+            sidecarClient.sendTestTranslation()
+        }
+    }
+
     func bringWindowPickerForward() async {
         message = "Opening window picker…"
 
@@ -209,10 +259,13 @@ final class AppState: ObservableObject {
                 configuration: configuration
             )
             let captureURL = try saveDebugCapture(image)
+            let captureData = try Data(contentsOf: captureURL)
 
             lastCaptureURL = captureURL
+            sidecarClient.translate(imageData: captureData)
             status = .idle
-            message = "Captured \(image.width)×\(image.height) px."
+            message =
+                "Captured \(image.width)×\(image.height) px and sent it to Python."
         } catch {
             present(error: error, action: "Capturing the selected window")
         }
@@ -233,6 +286,17 @@ final class AppState: ObservableObject {
         }
 
         NSWorkspace.shared.open(settingsURL)
+    }
+
+    private func presentSidecarTestAlert(title: String, message: String) {
+        NSApplication.shared.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.alertStyle = title.contains("Passed") ? .informational : .warning
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     private func startTrackingWindow() {

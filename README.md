@@ -8,14 +8,15 @@ The current focus is the Korean MVP:
 > Select a browser window, press a shortcut, and display correctly positioned
 > English translations over visible Korean dialogue and narration.
 
-See [PLAN.md](PLAN.md) for the complete roadmap and
-[evaluation/README.md](evaluation/README.md) for the first hands-on task.
+The private roadmap is kept outside Git. See
+[evaluation/README.md](evaluation/README.md) for the OCR evaluation workflow.
 
 ## Current status
 
-- Product scope and phased plan defined
-- Evaluation dataset structure prepared
-- Ollama and a project-specific Python 3.12 environment installed
-- Native menu-bar application scaffolded in `PanelLens.xcodeproj`
-- Sidecar JSON health-check protocol implemented and verified
-- Full Xcode installation is still required to build and run the macOS app
+- Native menu-bar app builds and runs on macOS 14+
+- Browser window selection and ScreenCaptureKit screenshots work
+- Click-through overlay follows the selected browser as it moves and resizes
+- Korean and Chinese OCR evaluation dataset structure is prepared
+- Project-specific Python 3.12 environment is installed
+- Swift launches and monitors the Python sidecar using newline-delimited JSON
+- Sidecar health checks and fake translation responses are implemented

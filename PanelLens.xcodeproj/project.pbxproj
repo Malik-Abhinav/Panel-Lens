@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		194065C34EAFFA0D19B92921 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32F59314FE41983CF7BE6768 /* AppState.swift */; };
+		3077BD11DF1AB4FAB8917573 /* SidecarClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65781FE7706E89AF96983D21 /* SidecarClient.swift */; };
 		4AF40CDC791616E9405E928A /* MenuBarContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC3EFC389176034D118EAA14 /* MenuBarContent.swift */; };
 		73EF8610934F2A1586878B52 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C9EC4698777C620E5D39304 /* SettingsView.swift */; };
 		BDB53CACA0B47DD2A9281F0B /* PanelLensApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6375C284098B4D1FCD6D1022 /* PanelLensApp.swift */; };
@@ -20,6 +21,7 @@
 		1C9EC4698777C620E5D39304 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		32F59314FE41983CF7BE6768 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		6375C284098B4D1FCD6D1022 /* PanelLensApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelLensApp.swift; sourceTree = "<group>"; };
+		65781FE7706E89AF96983D21 /* SidecarClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidecarClient.swift; sourceTree = "<group>"; };
 		955E56E3ABAFC6631884FA04 /* PanelLens.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PanelLens.entitlements; sourceTree = "<group>"; };
 		AEB40A0062FD30C9403A8120 /* WindowPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowPickerView.swift; sourceTree = "<group>"; };
 		BC3EFC389176034D118EAA14 /* MenuBarContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarContent.swift; sourceTree = "<group>"; };
@@ -44,6 +46,7 @@
 				955E56E3ABAFC6631884FA04 /* PanelLens.entitlements */,
 				6375C284098B4D1FCD6D1022 /* PanelLensApp.swift */,
 				1C9EC4698777C620E5D39304 /* SettingsView.swift */,
+				65781FE7706E89AF96983D21 /* SidecarClient.swift */,
 				AEB40A0062FD30C9403A8120 /* WindowPickerView.swift */,
 			);
 			path = PanelLens;
@@ -87,6 +90,7 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					91C3E036D1E260592829E146 = {
+						DevelopmentTeam = DK4MKJ7QP9;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -120,6 +124,7 @@
 				C905DCCD766AFD8AD9DCE387 /* OverlayController.swift in Sources */,
 				BDB53CACA0B47DD2A9281F0B /* PanelLensApp.swift in Sources */,
 				73EF8610934F2A1586878B52 /* SettingsView.swift in Sources */,
+				3077BD11DF1AB4FAB8917573 /* SidecarClient.swift in Sources */,
 				DEB417242B698E153F1622A8 /* WindowPickerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -188,8 +193,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = PanelLens/PanelLens.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = DK4MKJ7QP9;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "PanelLens captures the browser window you select so it can recognize and translate visible manhwa or manhua text locally.";
@@ -271,8 +278,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = PanelLens/PanelLens.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = DK4MKJ7QP9;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "PanelLens captures the browser window you select so it can recognize and translate visible manhwa or manhua text locally.";

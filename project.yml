@@ -27,6 +27,7 @@ targets:
           PanelLens captures the browser window you select so it can recognize
           and translate visible manhwa or manhua text locally.
         CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: Apple Development
+        DEVELOPMENT_TEAM: DK4MKJ7QP9
     entitlements:
       path: PanelLens/PanelLens.entitlements
-

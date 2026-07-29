@@ -14,6 +14,15 @@ struct MenuBarContent: View {
             .font(.caption)
             .foregroundStyle(appState.status == .error ? .red : .secondary)
 
+        Label(
+            appState.sidecarMessage,
+            systemImage: sidecarStatusImage
+        )
+        .font(.caption)
+        .foregroundStyle(
+            appState.sidecarState == .error ? .red : .secondary
+        )
+
         Divider()
 
         Button("Translate Visible Area") {
@@ -44,6 +53,14 @@ struct MenuBarContent: View {
         }
         .disabled(appState.selectedWindowID == nil)
 
+        Button(
+            appState.sidecarState == .ready
+                ? "Test Python Sidecar"
+                : "Start Python Sidecar"
+        ) {
+            appState.testSidecar()
+        }
+
         if !appState.hasScreenCapturePermission {
             Button("Open Screen Recording Settings…") {
                 appState.openScreenRecordingSettings()
@@ -67,5 +84,18 @@ struct MenuBarContent: View {
             NSApplication.shared.terminate(nil)
         }
         .keyboardShortcut("q")
+    }
+
+    private var sidecarStatusImage: String {
+        switch appState.sidecarState {
+        case .stopped:
+            "stop.circle"
+        case .starting:
+            "hourglass.circle"
+        case .ready:
+            "checkmark.circle"
+        case .error:
+            "exclamationmark.triangle"
+        }
     }
 }
