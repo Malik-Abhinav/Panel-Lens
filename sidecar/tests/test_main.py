@@ -34,6 +34,7 @@ def test_translate_returns_fake_region() -> None:
                 "confidence": 0.98,
             }
         ],
+        bubble_handler=lambda _, regions: (regions, 0),
         translation_handler=lambda regions, _: [
             {
                 **regions[0],
@@ -119,6 +120,7 @@ def test_translate_reports_ollama_offline() -> None:
                 "confidence": 0.99,
             }
         ],
+        bubble_handler=lambda _, regions: (regions, 0),
         translation_handler=fail_translation,
     )
 

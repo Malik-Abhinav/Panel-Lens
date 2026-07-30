@@ -2,7 +2,11 @@ import json
 from unittest.mock import patch
 
 from translation_pipeline import _attach_translations
+from translation_pipeline import _build_page_prompt
+from translation_pipeline import _normalize_translation
 from translation_pipeline import _request_translations
+from translation_pipeline import _romanize_korean_name
+from translation_pipeline import _translation_problems
 from translation_pipeline import translate_korean_regions
 
 
@@ -76,6 +80,94 @@ def test_ollama_request_keeps_model_warm_and_limits_output() -> None:
     assert result[0]["translation"] == "Hello"
 
 
+def test_page_prompt_includes_all_blocks_in_id_order() -> None:
+    regions = [
+        {"original": "첫 번째", "region_type": "narration"},
+        {"original": "두 번째", "region_type": "dialogue"},
+        {"original": "세 번째", "region_type": "dialogue"},
+    ]
+
+    prompt = _build_page_prompt(regions, "")
+
+    first = prompt.index("[id=0 type=narration] 첫 번째")
+    second = prompt.index("[id=1 type=dialogue] 두 번째")
+    third = prompt.index("[id=2 type=dialogue] 세 번째")
+    assert first < second < third
+    assert "exactly\n3 English strings" in prompt
+
+
+def test_page_prompt_uses_general_fidelity_rules() -> None:
+    prompt = _build_page_prompt(
+        [{"original": "아직 끝난 게 아닌데.", "region_type": "dialogue"}],
+        "",
+    )
+
+    assert "Preserve names, quantities, negation, subject/object direction" in prompt
+    assert "Do not invent I/he/she/they" in prompt
+    assert "Preserve fragments as fragments" in prompt
+
+
+def test_page_prompt_protects_name_only_vocatives() -> None:
+    prompt = _build_page_prompt(
+        [
+            {"original": "왜 이런 일이 생긴 거야?"},
+            {"original": "민수야."},
+        ],
+        "",
+    )
+
+    assert "vocative -아/-야" in prompt
+    assert "do not expand it into surrounding dialogue" in prompt
+
+
+def test_translation_problems_rejects_context_added_to_name() -> None:
+    regions = [{"original": "병희야."}]
+    translations = [
+        {
+            "translation": "Byeong-hui, what happened because of that guy?",
+        }
+    ]
+    assert _translation_problems(regions, translations, 0)
+
+    translations[0]["translation"] = "Byeong-hui."
+    assert _translation_problems(regions, translations, 0) == []
+
+
+def test_translation_problems_rejects_untranslated_hangul() -> None:
+    regions = [{"original": "이게 뭐야?"}]
+    translations = [{"translation": "What is this, 뭐야?"}]
+    problems = _translation_problems(regions, translations, 0)
+    assert "The English output contains untranslated Hangul." in problems
+
+
+def test_translation_problems_rejects_duplicate_outputs() -> None:
+    regions = [
+        {"original": "오늘은 집에 가자."},
+        {"original": "내일 다시 만나자."},
+    ]
+    translations = [
+        {"translation": "Let's go home today."},
+        {"translation": "Let's go home today."},
+    ]
+
+    assert any(
+        "duplicates" in problem
+        for problem in _translation_problems(regions, translations, 1)
+    )
+
+
+def test_romanize_korean_names_without_series_specific_data() -> None:
+    assert _romanize_korean_name("병희") == "Byeong-hui"
+    assert _romanize_korean_name("형남") == "Hyeong-nam"
+    assert _romanize_korean_name("이형태") == "Lee Hyeong-tae"
+
+
+def test_normalize_translation_only_changes_formatting() -> None:
+    assert _normalize_translation(
+        "  Keep   the model's meaning.  "
+    ) == "Keep the model's meaning."
+
+
 def test_empty_translation_retries_only_missing_region() -> None:
     regions = [{"original": "안녕"}, {"original": "효과음"}]
     first_result = [
@@ -112,6 +204,33 @@ def test_empty_translation_retries_only_missing_region() -> None:
         "Hello",
         "Sound effect",
     ]
+
+
+def test_valid_page_uses_one_batched_model_request() -> None:
+    regions = [{"original": "안녕"}, {"original": "잘 가"}]
+    batch = [
+        {
+            "index": 0,
+            "translation": "Hello",
+            "tone": "neutral",
+            "confidence": 0.8,
+        },
+        {
+            "index": 1,
+            "translation": "Goodbye",
+            "tone": "neutral",
+            "confidence": 0.8,
+        },
+    ]
+
+    with patch(
+        "translation_pipeline._request_translations",
+        return_value=batch,
+    ) as request_translations:
+        result = translate_korean_regions(regions, "batch-test-series")
+
+    request_translations.assert_called_once()
+    assert [item["translation"] for item in result] == ["Hello", "Goodbye"]
 
 
 def test_untranslatable_region_falls_back_without_failing_page() -> None:

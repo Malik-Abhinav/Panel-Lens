@@ -18,6 +18,7 @@ import time
 from collections import OrderedDict
 from typing import Any
 
+from bubble_filter import filter_dialogue_regions
 from ocr_pipeline import recognize_korean
 from translation_pipeline import (
     TranslationError,
@@ -29,7 +30,7 @@ PROTOCOL_VERSION = 1
 RESULT_CACHE_SIZE = max(
     1, int(os.environ.get("PANELLENS_RESULT_CACHE_SIZE", "8"))
 )
-_result_cache: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
+_result_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
 logging.basicConfig(
     filename=os.environ.get("PANELLENS_SIDECAR_LOG", "/tmp/panellens-sidecar.log"),
     level=logging.INFO,
@@ -50,20 +51,26 @@ def _cache_key(image_bytes: bytes, series: str) -> str:
     return digest.hexdigest()
 
 
-def _cached_regions(key: str) -> list[dict[str, Any]] | None:
-    regions = _result_cache.get(key)
-    if regions is None:
+def _cached_result(key: str) -> dict[str, Any] | None:
+    result = _result_cache.get(key)
+    if result is None:
         return None
 
     _result_cache.move_to_end(key)
-    return copy.deepcopy(regions)
+    return copy.deepcopy(result)
 
 
-def _store_cached_regions(
+def _store_cached_result(
     key: str,
     regions: list[dict[str, Any]],
+    detected_text_count: int,
+    filtered_text_count: int,
 ) -> None:
-    _result_cache[key] = copy.deepcopy(regions)
+    _result_cache[key] = {
+        "regions": copy.deepcopy(regions),
+        "detected_text_count": detected_text_count,
+        "filtered_text_count": filtered_text_count,
+    }
     _result_cache.move_to_end(key)
     while len(_result_cache) > RESULT_CACHE_SIZE:
         _result_cache.popitem(last=False)
@@ -72,6 +79,7 @@ def _store_cached_regions(
 def handle(
     message: dict[str, Any],
     ocr_handler: Any = recognize_korean,
+    bubble_handler: Any = filter_dialogue_regions,
     translation_handler: Any = translate_korean_regions,
 ) -> dict[str, Any]:
     request_id = message.get("request_id")
@@ -90,6 +98,8 @@ def handle(
         ocr_processing_time_ms = 0
         translation_processing_time_ms = 0
         cache_hit = False
+        detected_text_count = 0
+        filtered_text_count = 0
         encoded_image = message.get("image_base64", "")
         try:
             image_bytes = base64.b64decode(encoded_image, validate=True)
@@ -120,17 +130,23 @@ def handle(
                     "confidence": 0.99,
                 }
             ]
+            detected_text_count = len(regions)
         else:
             series = str(message.get("series", ""))
             use_result_cache = (
                 ocr_handler is recognize_korean
+                and bubble_handler is filter_dialogue_regions
                 and translation_handler is translate_korean_regions
             )
             key = _cache_key(image_bytes, series)
-            regions = _cached_regions(key) if use_result_cache else None
-            cache_hit = regions is not None
+            cached_result = _cached_result(key) if use_result_cache else None
+            cache_hit = cached_result is not None
 
-            if regions is None:
+            if cached_result is not None:
+                regions = cached_result["regions"]
+                detected_text_count = cached_result["detected_text_count"]
+                filtered_text_count = cached_result["filtered_text_count"]
+            else:
                 ocr_started = time.perf_counter()
                 try:
                     regions = ocr_handler(image_bytes)
@@ -147,6 +163,11 @@ def handle(
                             "message": str(error),
                         },
                     }
+                detected_text_count = len(regions)
+                regions, filtered_text_count = bubble_handler(
+                    image_bytes,
+                    regions,
+                )
                 ocr_processing_time_ms = round(
                     (time.perf_counter() - ocr_started) * 1000
                 )
@@ -172,7 +193,12 @@ def handle(
                 )
 
                 if use_result_cache:
-                    _store_cached_regions(key, regions)
+                    _store_cached_result(
+                        key,
+                        regions,
+                        detected_text_count,
+                        filtered_text_count,
+                    )
 
         return {
             "protocol_version": PROTOCOL_VERSION,
@@ -186,6 +212,8 @@ def handle(
             "ocr_processing_time_ms": ocr_processing_time_ms,
             "translation_processing_time_ms": translation_processing_time_ms,
             "cache_hit": cache_hit,
+            "detected_text_count": detected_text_count,
+            "filtered_text_count": filtered_text_count,
             "received_image_bytes": len(image_bytes),
         }
 
