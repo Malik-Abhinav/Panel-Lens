@@ -89,10 +89,16 @@ final class AppState: ObservableObject {
                         let translationSeconds = Double(
                             response.translationProcessingTimeMS ?? 0
                         ) / 1_000
+                        let filteredDescription = (
+                            response.filteredTextCount ?? 0
+                        ) > 0
+                            ? " Skipped \(response.filteredTextCount ?? 0) non-dialogue text region(s)."
+                            : ""
                         message =
                             "Translated \(regions.count) block(s). OCR: "
                             + "\(String(format: "%.1f", ocrSeconds))s, translation: "
                             + "\(String(format: "%.1f", translationSeconds))s."
+                            + filteredDescription
                     }
                 }
             } else if let error = response.error {

@@ -36,6 +36,8 @@ struct SidecarResponse: Decodable {
     let ocrProcessingTimeMS: Int?
     let translationProcessingTimeMS: Int?
     let cacheHit: Bool?
+    let detectedTextCount: Int?
+    let filteredTextCount: Int?
     let error: SidecarError?
 
     enum CodingKeys: String, CodingKey {
@@ -47,6 +49,8 @@ struct SidecarResponse: Decodable {
         case ocrProcessingTimeMS = "ocr_processing_time_ms"
         case translationProcessingTimeMS = "translation_processing_time_ms"
         case cacheHit = "cache_hit"
+        case detectedTextCount = "detected_text_count"
+        case filteredTextCount = "filtered_text_count"
         case error
     }
 }
