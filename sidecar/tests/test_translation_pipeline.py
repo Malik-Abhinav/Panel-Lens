@@ -2,8 +2,12 @@ import json
 from unittest.mock import patch
 
 from translation_pipeline import _attach_translations
+from translation_pipeline import _active_adapter
+from translation_pipeline import _build_hymt_page_prompt
 from translation_pipeline import _build_page_prompt
 from translation_pipeline import _normalize_translation
+from translation_pipeline import _parse_numbered_translations
+from translation_pipeline import _request_hymt_page
 from translation_pipeline import _request_translations
 from translation_pipeline import _romanize_korean_name
 from translation_pipeline import _translation_problems
@@ -76,8 +80,66 @@ def test_ollama_request_keeps_model_warm_and_limits_output() -> None:
     request = urlopen.call_args.args[0]
     payload = json.loads(request.data)
     assert payload["keep_alive"] == "30m"
+    assert payload["think"] is False
     assert payload["options"]["num_predict"] == 96
     assert result[0]["translation"] == "Hello"
+
+
+def test_translation_adapter_is_replaceable_by_model_or_configuration() -> None:
+    assert _active_adapter("hy-mt2:7b", "auto") == "hy-mt2"
+    assert _active_adapter("qwen2.5:7b", "auto") == "panelens-json"
+    assert _active_adapter("future-model:9b", "hy-mt2") == "hy-mt2"
+    assert (
+        _active_adapter("future-model:9b", "panelens-json")
+        == "panelens-json"
+    )
+
+
+def test_hymt_page_prompt_and_parser_preserve_alignment() -> None:
+    regions = [
+        {"original": "첫 번째", "region_type": "narration"},
+        {"original": "두 번째", "region_type": "dialogue"},
+    ]
+    prompt = _build_hymt_page_prompt(regions, "Example Series")
+
+    assert "[1] 첫 번째" in prompt
+    assert "[2] 두 번째" in prompt
+    assert "The series is Example Series." in prompt
+    assert "intended meaning of dialect" in prompt
+
+    parsed = _parse_numbered_translations(
+        "[1] First line\ncontinues here.\n[2] Second line",
+        2,
+    )
+    assert [item["translation"] for item in parsed] == [
+        "First line continues here.",
+        "Second line",
+    ]
+
+
+def test_hymt_request_uses_tencent_settings_and_numbered_output() -> None:
+    with patch(
+        "translation_pipeline._send_ollama_chat",
+        return_value={
+            "message": {
+                "content": "[1] Hello.\n[2] Goodbye.",
+            }
+        },
+    ) as send:
+        result = _request_hymt_page(
+            [{"original": "안녕"}, {"original": "잘 가"}],
+            "",
+        )
+
+    payload = send.call_args.args[0]
+    assert payload["model"] == "hy-mt2:7b"
+    assert payload["options"]["temperature"] == 0.7
+    assert payload["options"]["top_p"] == 0.6
+    assert payload["options"]["top_k"] == 20
+    assert [item["translation"] for item in result] == [
+        "Hello.",
+        "Goodbye.",
+    ]
 
 
 def test_page_prompt_includes_all_blocks_in_id_order() -> None:
@@ -133,11 +195,15 @@ def test_translation_problems_rejects_context_added_to_name() -> None:
     assert _translation_problems(regions, translations, 0) == []
 
 
-def test_translation_problems_rejects_untranslated_hangul() -> None:
+def test_translation_problems_rejects_untranslated_korean_or_cjk() -> None:
     regions = [{"original": "이게 뭐야?"}]
     translations = [{"translation": "What is this, 뭐야?"}]
     problems = _translation_problems(regions, translations, 0)
-    assert "The English output contains untranslated Hangul." in problems
+    assert any("Korean or CJK" in problem for problem in problems)
+
+    translations = [{"translation": "Proceed with admission手续 here."}]
+    problems = _translation_problems(regions, translations, 0)
+    assert any("Korean or CJK" in problem for problem in problems)
 
 
 def test_translation_problems_rejects_duplicate_outputs() -> None:
@@ -184,22 +250,24 @@ def test_empty_translation_retries_only_missing_region() -> None:
             "confidence": 0.0,
         },
     ]
-    recovered_result = [
-        {
-            "index": 0,
-            "translation": "Sound effect",
-            "tone": "neutral",
-            "confidence": 0.8,
-        }
-    ]
-
-    with patch(
-        "translation_pipeline._request_translations",
-        side_effect=[first_result, recovered_result],
-    ) as request_translations:
+    with (
+        patch(
+            "translation_pipeline._request_page_translations",
+            return_value=first_result,
+        ) as request_page_translations,
+        patch(
+            "translation_pipeline._repair_translation",
+            return_value={
+                "index": 0,
+                "translation": "Sound effect",
+                "tone": "neutral",
+                "confidence": 0.8,
+            },
+        ),
+    ):
         result = translate_korean_regions(regions)
 
-    assert request_translations.call_count == 2
+    request_page_translations.assert_called_once()
     assert [item["translation"] for item in result] == [
         "Hello",
         "Sound effect",
@@ -224,12 +292,12 @@ def test_valid_page_uses_one_batched_model_request() -> None:
     ]
 
     with patch(
-        "translation_pipeline._request_translations",
+        "translation_pipeline._request_page_translations",
         return_value=batch,
-    ) as request_translations:
+    ) as request_page_translations:
         result = translate_korean_regions(regions, "batch-test-series")
 
-    request_translations.assert_called_once()
+    request_page_translations.assert_called_once()
     assert [item["translation"] for item in result] == ["Hello", "Goodbye"]
 
 
@@ -250,19 +318,20 @@ def test_untranslatable_region_falls_back_without_failing_page() -> None:
         },
     ]
 
-    with patch(
-        "translation_pipeline._request_translations",
-        side_effect=[
-            empty_results,
-            [
-                {
-                    "index": 0,
-                    "translation": "",
-                    "tone": "neutral",
-                    "confidence": 0.0,
-                }
-            ],
-        ],
+    with (
+        patch(
+            "translation_pipeline._request_page_translations",
+            return_value=empty_results,
+        ),
+        patch(
+            "translation_pipeline._repair_translation",
+            return_value={
+                "index": 0,
+                "translation": "",
+                "tone": "untranslated",
+                "confidence": 0.0,
+            },
+        ),
     ):
         result = translate_korean_regions(regions)
 

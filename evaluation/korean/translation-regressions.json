@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "description": "Meaning-oriented Korean translation cases collected during manual PanelLens testing. These fixtures are evaluation data only and are never loaded by the production translator.",
+  "pages": [
+    {
+      "id": "narration-continuation",
+      "series_alias": "primary-series",
+      "category": ["narration", "fragment", "omitted-subject", "idiom"],
+      "regions": [
+        {
+          "source_text": "그렇게 명예롭지 못한 피를 뒤집어쓰며 여기까지 왔건만.",
+          "region_type": "narration",
+          "acceptable_english": "Having come this far drenched in such dishonorable blood, and yet...",
+          "alternate_english": [
+            "Though having come this far covered in such dishonorable blood..."
+          ]
+        },
+        {
+          "source_text": "어째서 또...",
+          "region_type": "narration",
+          "acceptable_english": "Why again..."
+        }
+      ]
+    },
+    {
+      "id": "names-and-vocative",
+      "series_alias": "primary-series",
+      "category": ["names", "vocative", "quantity", "slang"],
+      "regions": [
+        {
+          "source_text": "이형태 그 새끼 때문에 이게 뭔 지랄이야?",
+          "region_type": "dialogue",
+          "acceptable_english": "What the hell is this mess because of that bastard Lee Hyeong-tae?"
+        },
+        {
+          "source_text": "병희야.",
+          "region_type": "dialogue",
+          "acceptable_english": "Byeong-hui.",
+          "alternate_english": ["Byung-hee."]
+        },
+        {
+          "source_text": "형남이랑 애들 몇 안 보이는데.",
+          "region_type": "dialogue",
+          "acceptable_english": "I don't see Hyeong-nam and some of the guys.",
+          "alternate_english": [
+            "Hyeong-nam and a few of the guys are missing."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "violent-slang-fragment",
+      "series_alias": "primary-series",
+      "category": ["slang", "fragment", "register"],
+      "regions": [
+        {
+          "source_text": "이제 됐나?",
+          "region_type": "dialogue",
+          "acceptable_english": "Is it done now?",
+          "alternate_english": ["Are we good now?"]
+        },
+        {
+          "source_text": "오늘 니가 처맞는 이유가.",
+          "region_type": "dialogue",
+          "acceptable_english": "The reason you're getting beaten today is...",
+          "alternate_english": [
+            "The reason you're getting your ass kicked today is..."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "busan-dialect",
+      "series_alias": "primary-series",
+      "category": ["dialect", "pronouns", "fragment"],
+      "regions": [
+        {
+          "source_text": "니가 건드린 그 가쓰나는,",
+          "region_type": "dialogue",
+          "acceptable_english": "The girl you touched,"
+        },
+        {
+          "source_text": "부산에선 아무도 못 건드리는 아 거든.",
+          "region_type": "dialogue",
+          "acceptable_english": "Nobody in Busan can touch her."
+        },
+        {
+          "source_text": "가를 건드린다는 건",
+          "region_type": "dialogue",
+          "acceptable_english": "To touch her is..."
+        }
+      ]
+    },
+    {
+      "id": "bounty-wording",
+      "series_alias": "primary-series",
+      "category": ["idiom", "terminology", "connected-dialogue"],
+      "regions": [
+        {
+          "source_text": "듣던 중 반가운 말이군요.",
+          "region_type": "dialogue",
+          "acceptable_english": "That's the best news I've heard.",
+          "alternate_english": ["That's music to my ears."]
+        },
+        {
+          "source_text": "뭐?",
+          "region_type": "dialogue",
+          "acceptable_english": "What?"
+        },
+        {
+          "source_text": "이제 제 목이 그만한 값어치가 있다는 거 아닙니까.",
+          "region_type": "dialogue",
+          "acceptable_english": "Doesn't that mean my head is finally worth that much?"
+        }
+      ]
+    },
+    {
+      "id": "bounty-followup",
+      "series_alias": "primary-series",
+      "category": ["fragment", "terminology", "connected-dialogue"],
+      "regions": [
+        {
+          "source_text": "분위기가...",
+          "region_type": "dialogue",
+          "acceptable_english": "The atmosphere has..."
+        },
+        {
+          "source_text": "변했다.",
+          "region_type": "dialogue",
+          "acceptable_english": "changed."
+        },
+        {
+          "source_text": "당신의 목은 어느 정도 값어치가 있지?",
+          "region_type": "dialogue",
+          "acceptable_english": "How much is your head worth?"
+        }
+      ]
+    },
+    {
+      "id": "subject-ambiguity-from-live-page",
+      "series_alias": "swordmaster-youngest-son",
+      "image_file": "regression-subject-ambiguity.png",
+      "category": [
+        "live-capture",
+        "connected-narration",
+        "omitted-subject",
+        "visual-context"
+      ],
+      "regions": [
+        {
+          "source_text": "이제 조금만 더...",
+          "region_type": "narration",
+          "acceptable_english": "Just a little more...",
+          "alternate_english": ["Now, just a little more..."]
+        },
+        {
+          "source_text": "조금만 더 올라가면 잡을 수 있다.",
+          "region_type": "narration",
+          "acceptable_english": "If I go just a little higher, I can catch it.",
+          "alternate_english": [
+            "Just a little higher and I can catch it."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability-versus-intent-from-live-page",
+      "series_alias": "swordmaster-youngest-son",
+      "image_file": "regression-capability-vs-intent.png",
+      "category": [
+        "live-capture",
+        "semantic-role",
+        "capability",
+        "violent-dialogue"
+      ],
+      "regions": [
+        {
+          "source_text": "너를 죽일 내가 어느 정도인지 알 수 있잖아.",
+          "region_type": "dialogue",
+          "acceptable_english": "You know how strong I am—the one who's going to kill you.",
+          "alternate_english": [
+            "You know what level I'm at, considering I'm the one who's going to kill you."
+          ]
+        }
+      ]
+    }
+  ]
+}

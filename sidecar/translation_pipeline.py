@@ -14,14 +14,17 @@ from typing import Any
 OLLAMA_BASE_URL = os.environ.get(
     "PANELLENS_OLLAMA_URL", "http://127.0.0.1:11434"
 )
-OLLAMA_MODEL = os.environ.get("PANELLENS_OLLAMA_MODEL", "qwen2.5:7b")
+OLLAMA_MODEL = os.environ.get("PANELLENS_OLLAMA_MODEL", "hy-mt2:7b")
+TRANSLATION_ADAPTER = os.environ.get(
+    "PANELLENS_TRANSLATION_ADAPTER", "auto"
+)
 OLLAMA_KEEP_ALIVE = os.environ.get("PANELLENS_OLLAMA_KEEP_ALIVE", "30m")
 TRANSLATION_CACHE_SIZE = max(
     1, int(os.environ.get("PANELLENS_TRANSLATION_CACHE_SIZE", "64"))
 )
-TRANSLATION_PROMPT_VERSION = "2026-07-29.page-v1"
+TRANSLATION_PROMPT_VERSION = "2026-07-30.adapters-v2"
 _translation_cache: OrderedDict[
-    tuple[str, str, tuple[str, ...]],
+    tuple[str, str, str, str, tuple[str, ...]],
     list[dict[str, Any]],
 ] = OrderedDict()
 
@@ -63,6 +66,8 @@ def translate_korean_regions(
 
     cache_key = (
         TRANSLATION_PROMPT_VERSION,
+        OLLAMA_MODEL,
+        _active_adapter(),
         series.strip(),
         tuple(
             re.sub(r"\s+", "", str(region["original"]))
@@ -74,13 +79,12 @@ def translate_korean_regions(
         _translation_cache.move_to_end(cache_key)
         return _attach_translations(regions, cached)
 
-    prompt = _build_page_prompt(regions, series)
     try:
-        translations = _request_translations(prompt, len(regions))
+        translations = _request_page_translations(regions, series)
     except TranslationError as error:
         if error.code != "invalid_translation_response":
             raise
-        translations = _request_translations(prompt, len(regions))
+        translations = _request_page_translations(regions, series)
 
     for index, region in enumerate(regions):
         source = str(region["original"])
@@ -235,8 +239,10 @@ def _translation_problems(
         problems.append("The translation is empty.")
         return problems
 
-    if re.search(r"[가-힣]", translation):
-        problems.append("The English output contains untranslated Hangul.")
+    if re.search(r"[\u3400-\u4DBF\u4E00-\u9FFF가-힣]", translation):
+        problems.append(
+            "The English output contains untranslated Korean or CJK text."
+        )
 
     source_hangul = len(re.findall(r"[가-힣]", source))
     english_words = len(
@@ -292,6 +298,160 @@ def _format_page_blocks(regions: list[dict[str, Any]]) -> str:
     )
 
 
+def _active_adapter(
+    model: str | None = None,
+    configured: str | None = None,
+) -> str:
+    selected_model = (model or OLLAMA_MODEL).casefold()
+    selected_adapter = (configured or TRANSLATION_ADAPTER).casefold()
+    if selected_adapter == "auto":
+        return (
+            "hy-mt2"
+            if selected_model.startswith(("hy-mt2", "hymt2"))
+            else "panelens-json"
+        )
+    if selected_adapter not in {"hy-mt2", "panelens-json"}:
+        raise TranslationError(
+            "invalid_translation_adapter",
+            f"Unsupported translation adapter {selected_adapter!r}.",
+        )
+    return selected_adapter
+
+
+def _request_page_translations(
+    regions: list[dict[str, Any]],
+    series: str,
+) -> list[dict[str, Any]]:
+    if _active_adapter() == "hy-mt2":
+        return _request_hymt_page(regions, series)
+    return _request_translations(
+        _build_page_prompt(regions, series),
+        len(regions),
+    )
+
+
+def _build_hymt_page_prompt(
+    regions: list[dict[str, Any]],
+    series: str,
+) -> str:
+    series_line = (
+        f"The series is {series.strip()}.\n" if series.strip() else ""
+    )
+    blocks = "\n".join(
+        f"[{index + 1}] {region['original']}"
+        for index, region in enumerate(regions)
+    )
+    return (
+        "Translate the following numbered Korean comic text blocks into "
+        "natural English. The blocks appear in reading order on the same "
+        "visible page, so use neighboring blocks only to resolve context and "
+        "sentence continuity.\n"
+        f"{series_line}"
+        "Preserve every [number] exactly and output one concise translation "
+        "per block. Preserve names, quantities, negation, pronouns, sentence "
+        "fragments, politeness, slang strength, and tone. Translate the "
+        "intended meaning of dialect rather than transliterating dialect "
+        "words. Do not invent or omit information. Output only the numbered "
+        "English translations without explanations.\n\n"
+        f"{blocks}"
+    )
+
+
+def _parse_numbered_translations(
+    output: str,
+    expected_count: int,
+) -> list[dict[str, Any]]:
+    translations: dict[int, list[str]] = {}
+    current_index: int | None = None
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = re.match(r"^\[(\d+)\]\s*(.*)$", line)
+        if match:
+            current_index = int(match.group(1)) - 1
+            if current_index in translations:
+                raise TranslationError(
+                    "invalid_translation_response",
+                    "The translation response repeated a numbered block.",
+                )
+            translations[current_index] = [match.group(2).strip()]
+        elif current_index is not None:
+            translations[current_index].append(line)
+        else:
+            raise TranslationError(
+                "invalid_translation_response",
+                "The translation response did not preserve numbered blocks.",
+            )
+
+    if set(translations) != set(range(expected_count)):
+        raise TranslationError(
+            "invalid_translation_response",
+            f"Expected {expected_count} numbered translations, received "
+            f"{len(translations)}.",
+        )
+
+    normalized = []
+    for index in range(expected_count):
+        translation = " ".join(translations[index]).strip()
+        if not translation:
+            raise TranslationError(
+                "invalid_translation_response",
+                f"Translation item {index} is empty.",
+            )
+        normalized.append(
+            {
+                "index": index,
+                "translation": translation,
+                "tone": "neutral",
+                "confidence": 0.8,
+            }
+        )
+    return normalized
+
+
+def _request_hymt_page(
+    regions: list[dict[str, Any]],
+    series: str,
+) -> list[dict[str, Any]]:
+    content = _request_hymt_content(
+        _build_hymt_page_prompt(regions, series),
+        max_tokens=max(96, min(512, len(regions) * 64)),
+    )
+    return _parse_numbered_translations(content, len(regions))
+
+
+def _request_hymt_content(prompt: str, max_tokens: int) -> str:
+    payload = {
+        "model": OLLAMA_MODEL,
+        "stream": False,
+        "keep_alive": OLLAMA_KEEP_ALIVE,
+        "messages": [{"role": "user", "content": prompt}],
+        "options": {
+            "temperature": 0.7,
+            "top_p": 0.6,
+            "top_k": 20,
+            "repeat_penalty": 1.05,
+            "num_ctx": 4096,
+            "num_predict": max_tokens,
+        },
+    }
+    envelope = _send_ollama_chat(payload)
+    try:
+        content = str(envelope["message"]["content"]).strip()
+    except (KeyError, TypeError) as error:
+        raise TranslationError(
+            "invalid_translation_response",
+            "Ollama returned malformed translation output.",
+        ) from error
+    if not content:
+        raise TranslationError(
+            "invalid_translation_response",
+            "Ollama returned an empty translation response.",
+        )
+    return content
+
+
 def _build_page_prompt(
     regions: list[dict[str, Any]],
     series: str,
@@ -312,8 +472,9 @@ Requirements:
 - Preserve fragments as fragments when a sentence continues across blocks.
 - Korean often omits its subject. Do not invent I/he/she/they when the page does
   not establish one; prefer a natural subject-neutral fragment.
-- Romanize Korean personal names consistently. Do not leave Hangul in English
-  output. If an official spelling is unknown, use standard romanization.
+- Romanize Korean personal names consistently. Do not leave Korean, Chinese, or
+  other CJK characters in English output. If an official spelling is unknown,
+  use standard romanization.
 - A block containing only a name with vocative -아/-야 only calls that person;
   do not expand it into surrounding dialogue.
 - OCR may contain spacing or syllable errors. Correct only when grammar and page
@@ -335,7 +496,7 @@ def _repair_translation(
     problems: list[str],
 ) -> dict[str, Any]:
     source = str(regions[target_index]["original"])
-    prompt = f"""You are repairing one Korean-to-English comics translation.
+    repair_context = f"""You are repairing one Korean-to-English comics translation.
 
 Series: {series.strip() or "Unknown series"}
 
@@ -351,8 +512,28 @@ Validation problems:
 Translate only the target Korean. Context may clarify references, but do not
 borrow words or meaning from other IDs. Preserve names, quantities, negation,
 tone, subject/object direction, and incomplete sentence structure. Do not
-invent an omitted subject. Romanize names and output no Hangul.
+invent an omitted subject. Romanize names and output no Korean or CJK text.
+"""
+    if _active_adapter() == "hy-mt2":
+        try:
+            translation = _request_hymt_content(
+                repair_context
+                + "\nOutput only the corrected English translation without "
+                "a number, explanation, or translator note.",
+                max_tokens=128,
+            )
+        except TranslationError as error:
+            if error.code != "invalid_translation_response":
+                raise
+            translation = ""
+        return {
+            "index": target_index,
+            "translation": translation,
+            "tone": "neutral" if translation else "untranslated",
+            "confidence": 0.8 if translation else 0.0,
+        }
 
+    prompt = repair_context + """
 Return one JSON object with a "translations" array containing exactly one
 concise English string."""
     try:
@@ -371,6 +552,7 @@ concise English string."""
 def _request_translations(
     prompt: str,
     expected_count: int,
+    model: str | None = None,
 ) -> list[dict[str, Any]]:
     response_schema = {
         "type": "object",
@@ -385,8 +567,9 @@ def _request_translations(
         "required": ["translations"],
     }
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": model or OLLAMA_MODEL,
         "stream": False,
+        "think": False,
         "format": response_schema,
         "keep_alive": OLLAMA_KEEP_ALIVE,
         "messages": [{"role": "user", "content": prompt}],
@@ -396,37 +579,7 @@ def _request_translations(
             "num_predict": max(96, min(512, expected_count * 64)),
         },
     }
-    request = urllib.request.Request(
-        f"{OLLAMA_BASE_URL}/api/chat",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
-    try:
-        with urllib.request.urlopen(request, timeout=90) as response:
-            envelope = json.load(response)
-    except urllib.error.HTTPError as error:
-        body = error.read().decode("utf-8", errors="replace")
-        if error.code == 404:
-            raise TranslationError(
-                "ollama_model_missing",
-                f"Ollama model {OLLAMA_MODEL!r} is not installed.",
-            ) from error
-        raise TranslationError(
-            "ollama_request_failed",
-            f"Ollama returned HTTP {error.code}: {body[:200]}",
-        ) from error
-    except (urllib.error.URLError, TimeoutError) as error:
-        raise TranslationError(
-            "ollama_offline",
-            "Ollama is not reachable. Start it with `ollama serve`.",
-        ) from error
-    except json.JSONDecodeError as error:
-        raise TranslationError(
-            "invalid_translation_response",
-            "Ollama returned an invalid HTTP JSON response.",
-        ) from error
+    envelope = _send_ollama_chat(payload)
 
     try:
         content = envelope["message"]["content"]
@@ -463,6 +616,46 @@ def _request_translations(
         )
 
     return normalized
+
+
+def _send_ollama_chat(payload: dict[str, Any]) -> dict[str, Any]:
+    request = urllib.request.Request(
+        f"{OLLAMA_BASE_URL}/api/chat",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            envelope = json.load(response)
+    except urllib.error.HTTPError as error:
+        body = error.read().decode("utf-8", errors="replace")
+        if error.code == 404:
+            raise TranslationError(
+                "ollama_model_missing",
+                f"Ollama model {payload['model']!r} is not installed.",
+            ) from error
+        raise TranslationError(
+            "ollama_request_failed",
+            f"Ollama returned HTTP {error.code}: {body[:200]}",
+        ) from error
+    except (urllib.error.URLError, TimeoutError) as error:
+        raise TranslationError(
+            "ollama_offline",
+            "Ollama is not reachable. Start it with `ollama serve`.",
+        ) from error
+    except json.JSONDecodeError as error:
+        raise TranslationError(
+            "invalid_translation_response",
+            "Ollama returned an invalid HTTP JSON response.",
+        ) from error
+    if not isinstance(envelope, dict):
+        raise TranslationError(
+            "invalid_translation_response",
+            "Ollama returned an invalid response envelope.",
+        )
+    return envelope
 
 
 def _attach_translations(
