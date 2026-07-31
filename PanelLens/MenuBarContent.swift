@@ -76,8 +76,8 @@ struct MenuBarContent: View {
 
         Button(
             appState.isOverlayVisible
-                ? "Hide Test Overlay"
-                : "Show Test Overlay"
+                ? "Hide Translation Overlay"
+                : "Show Translation Overlay"
         ) {
             if appState.isOverlayVisible {
                 appState.hideOverlay()
