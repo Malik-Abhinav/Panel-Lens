@@ -1,5 +1,7 @@
 import base64
 
+import numpy as np
+
 from main import handle
 from ocr_pipeline import group_ocr_lines
 from translation_pipeline import TranslationError
@@ -225,3 +227,84 @@ def test_group_ocr_lines_does_not_merge_tall_distant_sound_effect() -> None:
     assert len(groups) == 2
     assert groups[0]["original"] == "병원비 더럽게 비싸네.."
     assert groups[1]["original"] == "저벅"
+
+
+def test_group_ocr_lines_keeps_nearby_bubbles_separate() -> None:
+    image = np.full((220, 240, 3), 70, dtype=np.uint8)
+    image[20:94, 40:200] = 250
+    image[102:180, 40:200] = 250
+    lines = [
+        {
+            "bbox": [72, 48, 96, 30],
+            "original": "첫 번째 말",
+            "translation": "",
+            "language": "ko",
+            "confidence": 0.99,
+        },
+        {
+            "bbox": [72, 108, 96, 30],
+            "original": "두 번째 말",
+            "translation": "",
+            "language": "ko",
+            "confidence": 0.99,
+        },
+    ]
+
+    groups = group_ocr_lines(lines, image)
+
+    assert [group["original"] for group in groups] == [
+        "첫 번째 말",
+        "두 번째 말",
+    ]
+
+
+def test_group_ocr_lines_preserves_multiline_text_in_one_bubble() -> None:
+    image = np.full((220, 240, 3), 70, dtype=np.uint8)
+    image[20:180, 40:200] = 250
+    lines = [
+        {
+            "bbox": [72, 48, 96, 30],
+            "original": "이어지는",
+            "translation": "",
+            "language": "ko",
+            "confidence": 0.99,
+        },
+        {
+            "bbox": [68, 80, 104, 30],
+            "original": "대화입니다",
+            "translation": "",
+            "language": "ko",
+            "confidence": 0.98,
+        },
+    ]
+
+    groups = group_ocr_lines(lines, image)
+
+    assert len(groups) == 1
+    assert groups[0]["original"] == "이어지는 대화입니다"
+    assert groups[0]["line_count"] == 2
+
+
+def test_group_ocr_lines_preserves_connected_narration_over_artwork() -> None:
+    image = np.full((220, 240, 3), (60, 35, 45), dtype=np.uint8)
+    lines = [
+        {
+            "bbox": [54, 48, 132, 30],
+            "original": "그날의 기억은",
+            "translation": "",
+            "language": "ko",
+            "confidence": 0.99,
+        },
+        {
+            "bbox": [60, 80, 120, 30],
+            "original": "아직 선명했다.",
+            "translation": "",
+            "language": "ko",
+            "confidence": 0.98,
+        },
+    ]
+
+    groups = group_ocr_lines(lines, image)
+
+    assert len(groups) == 1
+    assert groups[0]["original"] == "그날의 기억은 아직 선명했다."

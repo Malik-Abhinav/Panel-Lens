@@ -45,6 +45,20 @@ def test_colored_artwork_region_is_filtered() -> None:
     assert filtered_count == 1
 
 
+def test_mature_dialogue_in_white_bubble_is_kept_without_euphemizing() -> None:
+    region = _region()
+    region["original"] = "보지 만지지 마."
+
+    kept, filtered_count = filter_dialogue_regions(
+        _png_with_background((250, 250, 250)),
+        [region],
+    )
+
+    assert filtered_count == 0
+    assert kept[0]["original"] == "보지 만지지 마."
+    assert kept[0]["region_type"] == "dialogue"
+
+
 def test_long_narration_over_artwork_is_kept() -> None:
     region = _region()
     region["original"] = (
