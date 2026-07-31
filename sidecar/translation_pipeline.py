@@ -22,9 +22,11 @@ OLLAMA_KEEP_ALIVE = os.environ.get("PANELLENS_OLLAMA_KEEP_ALIVE", "30m")
 TRANSLATION_CACHE_SIZE = max(
     1, int(os.environ.get("PANELLENS_TRANSLATION_CACHE_SIZE", "64"))
 )
-TRANSLATION_PROMPT_VERSION = "2026-07-30.adapters-v2"
+TRANSLATION_CONTEXT_SIZE = 20
+TRANSLATION_CONTEXT_CHARACTER_BUDGET = 6000
+TRANSLATION_PROMPT_VERSION = "2026-07-31.rolling-context-v1"
 _translation_cache: OrderedDict[
-    tuple[str, str, str, str, tuple[str, ...]],
+    tuple[str, str, str, str, tuple[tuple[str, str], ...], tuple[str, ...]],
     list[dict[str, Any]],
 ] = OrderedDict()
 
@@ -60,15 +62,21 @@ def warm_translation_model() -> bool:
 def translate_korean_regions(
     regions: list[dict[str, Any]],
     series: str = "",
+    context: list[dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     if not regions:
         return []
 
+    bounded_context = _bounded_context(context)
     cache_key = (
         TRANSLATION_PROMPT_VERSION,
         OLLAMA_MODEL,
         _active_adapter(),
         series.strip(),
+        tuple(
+            (item["korean"], item["english"])
+            for item in bounded_context
+        ),
         tuple(
             re.sub(r"\s+", "", str(region["original"]))
             for region in regions
@@ -80,11 +88,19 @@ def translate_korean_regions(
         return _attach_translations(regions, cached)
 
     try:
-        translations = _request_page_translations(regions, series)
+        translations = _request_page_translations(
+            regions,
+            series,
+            bounded_context,
+        )
     except TranslationError as error:
         if error.code != "invalid_translation_response":
             raise
-        translations = _request_page_translations(regions, series)
+        translations = _request_page_translations(
+            regions,
+            series,
+            bounded_context,
+        )
 
     for index, region in enumerate(regions):
         source = str(region["original"])
@@ -119,6 +135,7 @@ def translate_korean_regions(
             index,
             series,
             problems,
+            bounded_context,
         )
         repaired["translation"] = _normalize_translation(
             repaired["translation"]
@@ -298,6 +315,43 @@ def _format_page_blocks(regions: list[dict[str, Any]]) -> str:
     )
 
 
+def _bounded_context(
+    context: list[dict[str, str]] | None,
+) -> list[dict[str, str]]:
+    if not context:
+        return []
+
+    newest_first: list[dict[str, str]] = []
+    used_characters = 0
+    for item in reversed(context[-TRANSLATION_CONTEXT_SIZE:]):
+        if not isinstance(item, dict):
+            continue
+        korean = str(item.get("korean", "")).strip()[:500]
+        english = str(item.get("english", "")).strip()[:1000]
+        item_size = len(korean) + len(english)
+        if not korean or not english:
+            continue
+        if (
+            used_characters
+            and used_characters + item_size
+            > TRANSLATION_CONTEXT_CHARACTER_BUDGET
+        ):
+            break
+        newest_first.append({"korean": korean, "english": english})
+        used_characters += item_size
+    return list(reversed(newest_first))
+
+
+def _format_previous_context(context: list[dict[str, str]]) -> str:
+    if not context:
+        return "(none)"
+    return "\n".join(
+        f"[previous {index + 1}] Korean: {item['korean']}\n"
+        f"[previous {index + 1}] English: {item['english']}"
+        for index, item in enumerate(context)
+    )
+
+
 def _active_adapter(
     model: str | None = None,
     configured: str | None = None,
@@ -321,11 +375,12 @@ def _active_adapter(
 def _request_page_translations(
     regions: list[dict[str, Any]],
     series: str,
+    context: list[dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     if _active_adapter() == "hy-mt2":
-        return _request_hymt_page(regions, series)
+        return _request_hymt_page(regions, series, context)
     return _request_translations(
-        _build_page_prompt(regions, series),
+        _build_page_prompt(regions, series, context),
         len(regions),
     )
 
@@ -333,6 +388,7 @@ def _request_page_translations(
 def _build_hymt_page_prompt(
     regions: list[dict[str, Any]],
     series: str,
+    context: list[dict[str, str]] | None = None,
 ) -> str:
     series_line = (
         f"The series is {series.strip()}.\n" if series.strip() else ""
@@ -341,18 +397,25 @@ def _build_hymt_page_prompt(
         f"[{index + 1}] {region['original']}"
         for index, region in enumerate(regions)
     )
+    previous_context = _format_previous_context(_bounded_context(context))
     return (
         "Translate the following numbered Korean comic text blocks into "
         "natural English. The blocks appear in reading order on the same "
         "visible page, so use neighboring blocks only to resolve context and "
         "sentence continuity.\n"
         f"{series_line}"
+        "Previous translated context is reference only. Use it to resolve "
+        "names, omitted subjects, pronouns, terminology, and continuity. "
+        "Never output or translate a previous block again.\n\n"
+        "Previous translated context:\n"
+        f"{previous_context}\n\n"
         "Preserve every [number] exactly and output one concise translation "
         "per block. Preserve names, quantities, negation, pronouns, sentence "
         "fragments, politeness, slang strength, and tone. Translate the "
         "intended meaning of dialect rather than transliterating dialect "
         "words. Do not invent or omit information. Output only the numbered "
         "English translations without explanations.\n\n"
+        "Current blocks to translate:\n"
         f"{blocks}"
     )
 
@@ -361,6 +424,21 @@ def _parse_numbered_translations(
     output: str,
     expected_count: int,
 ) -> list[dict[str, Any]]:
+    stripped_output = output.strip()
+    if (
+        expected_count == 1
+        and stripped_output
+        and not re.match(r"^\[\d+\]", stripped_output)
+    ):
+        return [
+            {
+                "index": 0,
+                "translation": stripped_output,
+                "tone": "neutral",
+                "confidence": 0.8,
+            }
+        ]
+
     translations: dict[int, list[str]] = {}
     current_index: int | None = None
     for raw_line in output.splitlines():
@@ -413,9 +491,10 @@ def _parse_numbered_translations(
 def _request_hymt_page(
     regions: list[dict[str, Any]],
     series: str,
+    context: list[dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     content = _request_hymt_content(
-        _build_hymt_page_prompt(regions, series),
+        _build_hymt_page_prompt(regions, series, context),
         max_tokens=max(96, min(512, len(regions) * 64)),
     )
     return _parse_numbered_translations(content, len(regions))
@@ -455,16 +534,26 @@ def _request_hymt_content(prompt: str, max_tokens: int) -> str:
 def _build_page_prompt(
     regions: list[dict[str, Any]],
     series: str,
+    context: list[dict[str, str]] | None = None,
 ) -> str:
     series_context = series.strip() or "Unknown series"
+    previous_context = _format_previous_context(_bounded_context(context))
     return f"""You are an expert Korean-to-English comics translator.
 Translate every OCR block from one visible manhwa page in reading order.
 
 Series: {series_context}
 
+Previous translated context (reference only; never output these blocks):
+{previous_context}
+
+Current page blocks to translate:
+{_format_page_blocks(regions)}
+
 Requirements:
 - Return exactly one concise English string per input ID, in the same order.
-- Use the entire page only to resolve genuine context and sentence continuity.
+- Use the previous context and current page only to resolve genuine context,
+  names, omitted subjects, pronouns, terminology, and sentence continuity.
+- Never return a translation for a previous context block.
 - Translate each block only from words supported by that block. Never copy,
   repeat, or import actions, locations, names, or pronouns from another block.
 - Preserve names, quantities, negation, subject/object direction, politeness,
@@ -481,9 +570,6 @@ Requirements:
   context make the intended Korean clear.
 - Do not add explanations or translator notes.
 
-Page blocks:
-{_format_page_blocks(regions)}
-
 Return one JSON object with a "translations" array containing exactly
 {len(regions)} English strings in ID order."""
 
@@ -494,11 +580,15 @@ def _repair_translation(
     target_index: int,
     series: str,
     problems: list[str],
+    context: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     source = str(regions[target_index]["original"])
     repair_context = f"""You are repairing one Korean-to-English comics translation.
 
 Series: {series.strip() or "Unknown series"}
+
+Previous translated context (reference only):
+{_format_previous_context(_bounded_context(context))}
 
 Page context:
 {_format_page_blocks(regions)}

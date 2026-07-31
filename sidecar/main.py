@@ -173,8 +173,9 @@ def handle(
                 )
 
                 translation_started = time.perf_counter()
+                context = _translation_context(message.get("context"))
                 try:
-                    regions = translation_handler(regions, series)
+                    regions = translation_handler(regions, series, context)
                 except TranslationError as error:
                     logging.exception(
                         "Translation failed for request %s", request_id
@@ -226,6 +227,22 @@ def handle(
             "message": f"Unsupported message type: {message_type!r}",
         },
     }
+
+
+def _translation_context(value: Any) -> list[dict[str, str]]:
+    """Validate and bound optional rolling context from the native app."""
+    if not isinstance(value, list):
+        return []
+
+    context: list[dict[str, str]] = []
+    for item in value[-20:]:
+        if not isinstance(item, dict):
+            continue
+        korean = str(item.get("korean", "")).strip()[:500]
+        english = str(item.get("english", "")).strip()[:1000]
+        if korean and english:
+            context.append({"korean": korean, "english": english})
+    return context
 
 
 def main() -> None:

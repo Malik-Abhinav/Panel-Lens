@@ -2,6 +2,7 @@ import base64
 
 import numpy as np
 
+from main import _translation_context
 from main import handle
 from ocr_pipeline import group_ocr_lines
 from translation_pipeline import TranslationError
@@ -37,7 +38,7 @@ def test_translate_returns_fake_region() -> None:
             }
         ],
         bubble_handler=lambda _, regions: (regions, 0),
-        translation_handler=lambda regions, _: [
+        translation_handler=lambda regions, _, __: [
             {
                 **regions[0],
                 "translation": "Hello",
@@ -104,6 +105,7 @@ def test_translate_reports_ollama_offline() -> None:
     def fail_translation(
         _: list[dict[str, object]],
         __: str,
+        ___: list[dict[str, str]],
     ) -> list[dict[str, object]]:
         raise TranslationError("ollama_offline", "Ollama is offline")
 
@@ -131,6 +133,57 @@ def test_translate_reports_ollama_offline() -> None:
         "code": "ollama_offline",
         "message": "Ollama is offline",
     }
+
+
+def test_translate_passes_validated_bounded_context() -> None:
+    received_context: list[dict[str, str]] = []
+
+    def translate(
+        regions: list[dict[str, object]],
+        _: str,
+        context: list[dict[str, str]],
+    ) -> list[dict[str, object]]:
+        received_context.extend(context)
+        return regions
+
+    raw_context: list[object] = [
+        {"korean": f"이전 {index}", "english": f"Previous {index}"}
+        for index in range(22)
+    ]
+    raw_context.extend(
+        [
+            {"korean": "", "english": "missing source"},
+            "invalid",
+        ]
+    )
+    result = handle(
+        {
+            "type": "translate",
+            "request_id": "context",
+            "image_base64": base64.b64encode(b"image").decode("ascii"),
+            "context": raw_context,
+        },
+        ocr_handler=lambda _: [
+            {
+                "bbox": [1, 2, 3, 4],
+                "original": "현재",
+                "translation": "Current",
+                "language": "ko",
+                "confidence": 0.99,
+            }
+        ],
+        bubble_handler=lambda _, regions: (regions, 0),
+        translation_handler=translate,
+    )
+
+    assert result["status"] == "ok"
+    assert len(received_context) == 18
+    assert received_context[0]["korean"] == "이전 4"
+    assert received_context[-1]["english"] == "Previous 21"
+
+
+def test_translation_context_rejects_non_list_payload() -> None:
+    assert _translation_context({"korean": "안녕", "english": "Hello"}) == []
 
 
 def test_group_ocr_lines_combines_wrapped_dialogue() -> None:

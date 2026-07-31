@@ -60,9 +60,11 @@ final class AppState: ObservableObject {
     private var pendingTranslationFingerprint: [UInt8]?
     private var lastPresentedFingerprint: [UInt8]?
     private var lastPresentedRegions: [SidecarRegion] = []
+    private var translationContext: [[String: String]] = []
 
     private let automaticTranslationDelay = Duration.milliseconds(500)
     private let similarCaptureDifference = 3.0
+    private let translationContextLimit = 20
 
     init() {
         overlayController.onDismissForScroll = { [weak self] in
@@ -107,6 +109,7 @@ final class AppState: ObservableObject {
                     }
                     lastPresentedFingerprint = pendingTranslationFingerprint
                     lastPresentedRegions = regions
+                    rememberTranslationContext(from: regions)
                     showTranslationOverlay(for: regions)
                     status = .idle
                     if response.cacheHit == true {
@@ -443,7 +446,10 @@ final class AppState: ObservableObject {
             let captureData = try Data(contentsOf: captureURL)
 
             lastCaptureURL = captureURL
-            sidecarClient.translate(imageData: captureData)
+            sidecarClient.translate(
+                imageData: captureData,
+                context: translationContext
+            )
             message =
                 "Reading Korean and translating locally…"
         } catch {
@@ -534,6 +540,33 @@ final class AppState: ObservableObject {
         pendingTranslationFingerprint = nil
         lastPresentedFingerprint = nil
         lastPresentedRegions = []
+        translationContext = []
+    }
+
+    private func rememberTranslationContext(from regions: [SidecarRegion]) {
+        for region in regions {
+            let korean = region.original.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            let english = region.translation.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            guard !korean.isEmpty, !english.isEmpty else { continue }
+
+            translationContext.removeAll {
+                $0["korean"] == korean && $0["english"] == english
+            }
+            translationContext.append([
+                "korean": korean,
+                "english": english,
+            ])
+        }
+
+        if translationContext.count > translationContextLimit {
+            translationContext.removeFirst(
+                translationContext.count - translationContextLimit
+            )
+        }
     }
 
     private func cropToReadingArea(_ image: CGImage) throws -> CGImage {

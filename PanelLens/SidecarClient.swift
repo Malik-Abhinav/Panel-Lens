@@ -166,11 +166,13 @@ final class SidecarClient {
     func translate(
         imageData: Data,
         series: String = "",
-        chapter: Int? = nil
+        chapter: Int? = nil,
+        context: [[String: String]] = []
     ) {
         var payload: [String: Any] = [
             "image_base64": imageData.base64EncodedString(),
             "series": series,
+            "context": context,
         ]
         if let chapter {
             payload["chapter"] = chapter
