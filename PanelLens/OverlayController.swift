@@ -11,12 +11,14 @@ struct OverlayTranslation: Identifiable {
 @MainActor
 final class OverlayController {
     var onDismissForScroll: (() -> Void)?
+    var onScrollActivity: (() -> Void)?
 
     private let panel: NSPanel
     private var translations: [OverlayTranslation] = []
     private var scrollMonitor: Any?
     private var accumulatedScroll: CGFloat = 0
     private var lastScrollEventAt: Date?
+    private var dismissedForCurrentScroll = false
 
     private let scrollDismissThreshold: CGFloat = 60
     private let scrollSequenceTimeout: TimeInterval = 0.6
@@ -67,6 +69,12 @@ final class OverlayController {
         renderTranslations()
     }
 
+    func hideTranslationsWhileMonitoringScroll() {
+        translations = []
+        renderTranslations()
+        panel.orderOut(nil)
+    }
+
     func selectReadingArea(
         over windowFrame: CGRect,
         onComplete: @escaping (CGRect, CGSize) -> Void,
@@ -107,6 +115,7 @@ final class OverlayController {
         stopMonitoringScroll()
         accumulatedScroll = 0
         lastScrollEventAt = nil
+        dismissedForCurrentScroll = false
         scrollMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: .scrollWheel
         ) { [weak self] event in
@@ -123,12 +132,19 @@ final class OverlayController {
         }
         accumulatedScroll = 0
         lastScrollEventAt = nil
+        dismissedForCurrentScroll = false
     }
 
     private func handleScroll(_ event: NSEvent) {
+        let now = Date()
+        if dismissedForCurrentScroll {
+            lastScrollEventAt = now
+            onScrollActivity?()
+            return
+        }
+
         guard panel.isVisible, !translations.isEmpty else { return }
 
-        let now = Date()
         if let lastScrollEventAt,
            now.timeIntervalSince(lastScrollEventAt) > scrollSequenceTimeout
         {
@@ -151,8 +167,9 @@ final class OverlayController {
 
         translations = []
         panel.orderOut(nil)
-        stopMonitoringScroll()
+        dismissedForCurrentScroll = true
         onDismissForScroll?()
+        onScrollActivity?()
     }
 
     private func appKitFrame(for coreGraphicsFrame: CGRect) -> CGRect? {

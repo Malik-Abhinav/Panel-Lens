@@ -52,6 +52,12 @@ struct MenuBarContent: View {
         .keyboardShortcut("t", modifiers: [.command, .shift])
         .disabled(!appState.canCapture)
 
+        Toggle(
+            "Automatically Translate After Scrolling",
+            isOn: $appState.isAutomaticTranslationEnabled
+        )
+        .disabled(appState.selectedWindowID == nil)
+
         Button("Select Window…") {
             openWindow(id: "window-picker")
             Task {
