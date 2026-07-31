@@ -64,6 +64,13 @@ expansion, and duplicated translations. Only suspicious regions receive a
 separate adapter-aware repair request. A second cache normalizes harmless OCR
 spacing differences so repeated pages receive the same English output.
 
+The native app also sends up to 20 recent Korean/English blocks as rolling
+reference context. Previous blocks are separated from the current viewport and
+are never included in the requested output. The sidecar validates this history
+and caps it at 6,000 characters so context helps with names, omitted subjects,
+pronouns, terminology, and cross-viewport continuity without growing latency
+indefinitely.
+
 ## Bubble filtering
 
 Before translation, OCR regions are classified as dialogue, narration, or

@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from translation_pipeline import _attach_translations
 from translation_pipeline import _active_adapter
+from translation_pipeline import _bounded_context
 from translation_pipeline import _build_hymt_page_prompt
 from translation_pipeline import _build_page_prompt
 from translation_pipeline import _normalize_translation
@@ -115,6 +116,60 @@ def test_hymt_page_prompt_and_parser_preserve_alignment() -> None:
         "First line continues here.",
         "Second line",
     ]
+    assert _parse_numbered_translations(
+        "I’ll follow soon.",
+        1,
+    )[0]["translation"] == "I’ll follow soon."
+
+
+def test_prompts_separate_previous_context_from_current_blocks() -> None:
+    context = [
+        {
+            "korean": "병희가 먼저 갔어.",
+            "english": "Byeong-hui went ahead.",
+        }
+    ]
+    regions = [{"original": "곧 따라갈게.", "region_type": "dialogue"}]
+
+    hymt_prompt = _build_hymt_page_prompt(regions, "", context)
+    json_prompt = _build_page_prompt(regions, "", context)
+
+    for prompt in (hymt_prompt, json_prompt):
+        assert "병희가 먼저 갔어." in prompt
+        assert "Byeong-hui went ahead." in prompt
+        assert "곧 따라갈게." in prompt
+        assert "reference only" in prompt.casefold()
+        assert "never output" in prompt.casefold()
+
+
+def test_context_is_validated_and_bounded_to_twenty_blocks() -> None:
+    context = [
+        {"korean": f"과거 {index}", "english": f"Past {index}"}
+        for index in range(22)
+    ]
+    context.append({"korean": "", "english": "invalid"})
+
+    bounded = _bounded_context(context)
+
+    assert len(bounded) == 19
+    assert bounded[0]["korean"] == "과거 3"
+    assert bounded[-1]["english"] == "Past 21"
+
+
+def test_context_character_budget_keeps_the_newest_blocks() -> None:
+    context = [
+        {
+            "korean": f"{index}" + ("가" * 499),
+            "english": "x" * 1000,
+        }
+        for index in range(6)
+    ]
+
+    bounded = _bounded_context(context)
+
+    assert len(bounded) == 4
+    assert bounded[0]["korean"].startswith("2")
+    assert bounded[-1]["korean"].startswith("5")
 
 
 def test_hymt_request_uses_tencent_settings_and_numbered_output() -> None:
