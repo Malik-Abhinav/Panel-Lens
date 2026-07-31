@@ -89,8 +89,15 @@ grouping.
 
 ```sh
 PANELLENS_MINIMUM_BUBBLE_SCORE=0.55
+PANELLENS_MINIMUM_TRANSLUCENT_BUBBLE_SCORE=0.68
 PANELLENS_MINIMUM_NARRATION_SCORE=0.60
 ```
+
+Translucent balloons use a separate conservative path based on local
+brightness, color neutrality, smoothness, OCR confidence, dialogue structure,
+and neutral-colored lettering. Short fragments require stronger visual
+confidence and punctuation. Small colored decorative sound effects remain
+filtered even when they appear over a white page.
 
 If Ollama is offline or the model is missing, the sidecar returns a structured
 error for the macOS app to display.
