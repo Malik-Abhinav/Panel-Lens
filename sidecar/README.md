@@ -74,6 +74,12 @@ signs, and small webpage labels outside bubbles are skipped. The default score
 threshold was calibrated against the annotated Korean evaluation images and can
 be overridden during experiments:
 
+Wrapped OCR lines are grouped using both geometry and the connected light
+background around them. This keeps multiline dialogue together inside one
+balloon while preventing nearby, separately bounded balloons from being
+translated as one sentence. Non-bubble narration falls back to geometric
+grouping.
+
 ```sh
 PANELLENS_MINIMUM_BUBBLE_SCORE=0.55
 PANELLENS_MINIMUM_NARRATION_SCORE=0.60

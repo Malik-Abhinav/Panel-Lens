@@ -10,6 +10,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault(
@@ -23,10 +25,20 @@ MINIMUM_CONFIDENCE = 0.4
 
 def group_ocr_lines(
     lines: list[dict[str, Any]],
+    image: np.ndarray | None = None,
 ) -> list[dict[str, Any]]:
     """Combine nearby wrapped OCR lines into dialogue-sized text blocks."""
+    component_ids = (
+        _light_background_components(image, lines)
+        if image is not None
+        else [None] * len(lines)
+    )
+    prepared_lines = [
+        {**line, "_bubble_component": component_id}
+        for line, component_id in zip(lines, component_ids, strict=True)
+    ]
     ordered = sorted(
-        lines,
+        prepared_lines,
         key=lambda line: (line["bbox"][1], line["bbox"][0]),
     )
     groups: list[list[dict[str, Any]]] = []
@@ -44,6 +56,19 @@ def _belongs_to_group(
     group: list[dict[str, Any]],
     line: dict[str, Any],
 ) -> bool:
+    group_components = {
+        item.get("_bubble_component")
+        for item in group
+        if item.get("_bubble_component") is not None
+    }
+    line_component = line.get("_bubble_component")
+    if (
+        group_components
+        and line_component is not None
+        and line_component not in group_components
+    ):
+        return False
+
     group_left = min(item["bbox"][0] for item in group)
     group_top = min(item["bbox"][1] for item in group)
     group_right = max(
@@ -116,6 +141,63 @@ def _merge_group(group: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "line_count": len(group),
     }
+
+
+def _light_background_components(
+    image: np.ndarray,
+    lines: list[dict[str, Any]],
+) -> list[int | None]:
+    """Identify the light connected area surrounding each OCR line."""
+    import cv2
+
+    darkest_channel = image.min(axis=2)
+    color_range = image.max(axis=2) - darkest_channel
+    light_pixels = (
+        (darkest_channel >= 225) & (color_range <= 25)
+    ).astype(np.uint8)
+    component_count, labels, stats, _ = cv2.connectedComponentsWithStats(
+        light_pixels,
+        connectivity=8,
+    )
+    minimum_area = max(64, round(image.shape[0] * image.shape[1] * 0.0001))
+    valid_components = {
+        component_id
+        for component_id in range(1, component_count)
+        if stats[component_id, cv2.CC_STAT_AREA] >= minimum_area
+    }
+
+    return [
+        _surrounding_component(labels, valid_components, line["bbox"])
+        for line in lines
+    ]
+
+
+def _surrounding_component(
+    labels: np.ndarray,
+    valid_components: set[int],
+    bbox: list[float],
+) -> int | None:
+    image_height, image_width = labels.shape
+    left, top, width, height = bbox
+    horizontal_margin = max(4, round(width * 0.08))
+    vertical_margin = max(4, round(height * 0.15))
+    x1 = max(0, round(left) - horizontal_margin)
+    y1 = max(0, round(top) - vertical_margin)
+    x2 = min(image_width, round(left + width) + horizontal_margin)
+    y2 = min(image_height, round(top + height) + vertical_margin)
+    nearby_labels = labels[y1:y2, x1:x2]
+    if nearby_labels.size == 0:
+        return None
+
+    component_ids, counts = np.unique(nearby_labels, return_counts=True)
+    candidates = [
+        (int(count), int(component_id))
+        for component_id, count in zip(component_ids, counts, strict=True)
+        if int(component_id) in valid_components
+    ]
+    if not candidates:
+        return None
+    return max(candidates)[1]
 
 
 class KoreanOCRPipeline:
@@ -199,7 +281,7 @@ class KoreanOCRPipeline:
                 }
             )
 
-        return group_ocr_lines(regions)
+        return group_ocr_lines(regions, image)
 
 
 _korean_pipeline: KoreanOCRPipeline | None = None
