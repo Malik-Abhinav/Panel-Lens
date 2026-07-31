@@ -20,4 +20,4 @@ The private roadmap is kept outside Git. See
 - Project-specific Python 3.12 environment is installed
 - Swift launches and monitors the Python sidecar using newline-delimited JSON
 - Korean OCR runs locally on the selected reader area
-- Contextual Korean-to-English translation uses local Ollama/Qwen2.5 7B
+- Contextual Korean-to-English translation uses local Ollama/Hy-MT2 7B

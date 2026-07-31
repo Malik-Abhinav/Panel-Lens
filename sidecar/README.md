@@ -17,38 +17,52 @@ are listed separately in `requirements-ocr.txt`.
 
 ## Local translation model
 
-PanelLens uses Ollama with Qwen2.5 7B by default:
+PanelLens uses Tencent Hy-MT2 7B through Ollama by default. The official Q4
+GGUF is imported locally as `hy-mt2:7b`; model files belong in the ignored
+top-level `models/` directory and are never committed.
 
 ```sh
 ollama serve
-ollama pull qwen2.5:7b
+ollama list
+# Confirm that hy-mt2:7b is installed.
 ```
 
 The sidecar calls Ollama at `http://127.0.0.1:11434`. Development overrides:
 
 ```sh
 PANELLENS_OLLAMA_URL=http://127.0.0.1:11434
-PANELLENS_OLLAMA_MODEL=qwen2.5:7b
+PANELLENS_OLLAMA_MODEL=hy-mt2:7b
+PANELLENS_TRANSLATION_ADAPTER=auto
 PANELLENS_OLLAMA_KEEP_ALIVE=30m
 PANELLENS_RESULT_CACHE_SIZE=8
 PANELLENS_TRANSLATION_CACHE_SIZE=64
 ```
 
-PanelLens warms Qwen in the background when the sidecar starts and asks Ollama
-to keep it resident for 30 minutes. The sidecar also keeps the eight most recent
-complete screenshot results in memory, so translating an unchanged capture
-again avoids both OCR and model generation. Translation responses include
-separate `ocr_processing_time_ms`, `translation_processing_time_ms`, and
-`cache_hit` fields for profiling.
+`auto` selects Hy-MT2's numbered direct-translation adapter for model names
+starting with `hy-mt2`, and the structured JSON adapter for other model names.
+An explicit `hy-mt2` or `panelens-json` override makes model experiments
+possible without changing OCR, IPC, caching, or validation code. For example,
+the previous model can still be tested with:
 
-Translations are generated deterministically in one structured page-level
-request. Every OCR region has an ordered ID and type, allowing the model to use
-nearby dialogue and narration for continuity while returning exactly one result
-per region. Cheap structural validation catches empty output, leftover Hangul,
-implausible expansion, and duplicated translations. Only suspicious regions
-receive a separate repair request. A second cache
-normalizes harmless OCR spacing differences so repeated pages receive the same
-English output.
+```sh
+PANELLENS_OLLAMA_MODEL=qwen2.5:7b
+PANELLENS_TRANSLATION_ADAPTER=panelens-json
+```
+
+PanelLens warms the selected model in the background when the sidecar starts
+and asks Ollama to keep it resident for 30 minutes. The sidecar also keeps the
+eight most recent complete screenshot results in memory, so translating an
+unchanged capture again avoids both OCR and model generation. Translation
+responses include separate `ocr_processing_time_ms`,
+`translation_processing_time_ms`, and `cache_hit` fields for profiling.
+
+Translations are generated in one aligned page-level request. Every OCR region
+has an ordered ID and type, allowing the model to use nearby dialogue and
+narration for continuity while returning exactly one result per region. Cheap
+structural validation catches empty output, leftover Hangul, implausible
+expansion, and duplicated translations. Only suspicious regions receive a
+separate adapter-aware repair request. A second cache normalizes harmless OCR
+spacing differences so repeated pages receive the same English output.
 
 ## Bubble filtering
 
