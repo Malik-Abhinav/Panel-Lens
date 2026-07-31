@@ -13,6 +13,7 @@ struct SidecarRegion: Decodable {
     let translation: String
     let language: String
     let confidence: Double
+    let regionType: String?
     let tone: String?
     let translationConfidence: Double?
 
@@ -22,6 +23,7 @@ struct SidecarRegion: Decodable {
         case translation
         case language
         case confidence
+        case regionType = "region_type"
         case tone
         case translationConfidence = "translation_confidence"
     }

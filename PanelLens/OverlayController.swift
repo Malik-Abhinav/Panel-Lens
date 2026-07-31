@@ -1,9 +1,25 @@
 import AppKit
 import SwiftUI
 
+struct OverlayTranslation: Identifiable {
+    let id = UUID()
+    let normalizedFrame: CGRect
+    let text: String
+    let regionType: String?
+}
+
 @MainActor
 final class OverlayController {
+    var onDismissForScroll: (() -> Void)?
+
     private let panel: NSPanel
+    private var translations: [OverlayTranslation] = []
+    private var scrollMonitor: Any?
+    private var accumulatedScroll: CGFloat = 0
+    private var lastScrollEventAt: Date?
+
+    private let scrollDismissThreshold: CGFloat = 60
+    private let scrollSequenceTimeout: TimeInterval = 0.6
 
     init() {
         panel = NSPanel(
@@ -24,14 +40,31 @@ final class OverlayController {
             .fullScreenAuxiliary,
             .stationary
         ]
-        panel.contentView = NSHostingView(rootView: TestOverlayView())
+        panel.contentView = NSHostingView(
+            rootView: TranslationOverlayView(translations: [])
+        )
     }
 
     func show(over windowFrame: CGRect) {
         panel.ignoresMouseEvents = true
-        panel.contentView = NSHostingView(rootView: TestOverlayView())
+        renderTranslations()
         updateFrame(windowFrame)
         panel.orderFrontRegardless()
+    }
+
+    func showTranslations(
+        _ translations: [OverlayTranslation],
+        over windowFrame: CGRect
+    ) {
+        self.translations = translations
+        startMonitoringScroll()
+        show(over: windowFrame)
+    }
+
+    func clearTranslations() {
+        translations = []
+        stopMonitoringScroll()
+        renderTranslations()
     }
 
     func selectReadingArea(
@@ -61,6 +94,65 @@ final class OverlayController {
     func hide() {
         panel.ignoresMouseEvents = true
         panel.orderOut(nil)
+        stopMonitoringScroll()
+    }
+
+    private func renderTranslations() {
+        panel.contentView = NSHostingView(
+            rootView: TranslationOverlayView(translations: translations)
+        )
+    }
+
+    private func startMonitoringScroll() {
+        stopMonitoringScroll()
+        accumulatedScroll = 0
+        lastScrollEventAt = nil
+        scrollMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: .scrollWheel
+        ) { [weak self] event in
+            Task { @MainActor [weak self] in
+                self?.handleScroll(event)
+            }
+        }
+    }
+
+    private func stopMonitoringScroll() {
+        if let scrollMonitor {
+            NSEvent.removeMonitor(scrollMonitor)
+            self.scrollMonitor = nil
+        }
+        accumulatedScroll = 0
+        lastScrollEventAt = nil
+    }
+
+    private func handleScroll(_ event: NSEvent) {
+        guard panel.isVisible, !translations.isEmpty else { return }
+
+        let now = Date()
+        if let lastScrollEventAt,
+           now.timeIntervalSince(lastScrollEventAt) > scrollSequenceTimeout
+        {
+            accumulatedScroll = 0
+        }
+        lastScrollEventAt = now
+
+        let delta = event.hasPreciseScrollingDeltas
+            ? event.scrollingDeltaY
+            : event.scrollingDeltaY * 12
+        if accumulatedScroll.sign != delta.sign, accumulatedScroll != 0 {
+            accumulatedScroll = delta
+        } else {
+            accumulatedScroll += delta
+        }
+
+        guard abs(accumulatedScroll) >= scrollDismissThreshold else {
+            return
+        }
+
+        translations = []
+        panel.orderOut(nil)
+        stopMonitoringScroll()
+        onDismissForScroll?()
     }
 
     private func appKitFrame(for coreGraphicsFrame: CGRect) -> CGRect? {
@@ -193,39 +285,61 @@ private struct ReadingAreaSelectionView: View {
     }
 }
 
-private struct TestOverlayView: View {
+private struct TranslationOverlayView: View {
+    let translations: [OverlayTranslation]
+
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                Rectangle()
-                    .stroke(Color.cyan, lineWidth: 4)
-
-                marker("TOP LEFT", color: .yellow)
-                    .position(x: 78, y: 28)
-
-                marker("CENTER", color: .cyan)
-                    .position(
-                        x: geometry.size.width / 2,
-                        y: geometry.size.height / 2
-                    )
-
-                marker("BOTTOM RIGHT", color: .pink)
-                    .position(
-                        x: max(92, geometry.size.width - 92),
-                        y: max(28, geometry.size.height - 28)
-                    )
+                ForEach(translations) { translation in
+                    translationCard(translation, in: geometry.size)
+                }
             }
         }
         .background(Color.clear)
+        .allowsHitTesting(false)
     }
 
-    private func marker(_ title: String, color: Color) -> some View {
-        Text(title)
-            .font(.system(size: 11, weight: .bold, design: .rounded))
+    private func translationCard(
+        _ translation: OverlayTranslation,
+        in canvasSize: CGSize
+    ) -> some View {
+        let frame = CGRect(
+            x: translation.normalizedFrame.minX * canvasSize.width,
+            y: translation.normalizedFrame.minY * canvasSize.height,
+            width: translation.normalizedFrame.width * canvasSize.width,
+            height: translation.normalizedFrame.height * canvasSize.height
+        )
+        let expandedFrame = frame.insetBy(dx: -5, dy: -4)
+        let fontSize = min(
+            28,
+            max(10, min(expandedFrame.height * 0.28, expandedFrame.width * 0.12))
+        )
+
+        return Text(translation.text)
+            .font(.system(size: fontSize, weight: .semibold, design: .rounded))
+            .multilineTextAlignment(.center)
+            .lineLimit(6)
+            .minimumScaleFactor(0.45)
             .foregroundStyle(.black)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(color)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3)
+            .frame(
+                width: max(36, expandedFrame.width),
+                height: max(24, expandedFrame.height)
+            )
+            .background {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.white.opacity(0.94))
+                    .shadow(color: .black.opacity(0.22), radius: 2, y: 1)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.black.opacity(0.16), lineWidth: 1)
+            }
+            .position(
+                x: expandedFrame.midX,
+                y: expandedFrame.midY
+            )
     }
 }

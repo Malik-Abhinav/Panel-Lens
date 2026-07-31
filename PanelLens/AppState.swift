@@ -51,8 +51,15 @@ final class AppState: ObservableObject {
     private let sidecarClient = SidecarClient()
     private var windowTrackingTask: Task<Void, Never>?
     private var normalizedReadingArea: CGRect?
+    private var pendingTranslationImageSize: CGSize?
+    private var pendingTranslationReadingArea: CGRect?
 
     init() {
+        overlayController.onDismissForScroll = { [weak self] in
+            guard let self else { return }
+            isOverlayVisible = false
+            message = "Translation overlay cleared after the page scrolled."
+        }
         sidecarClient.onStateChange = { [weak self] state, message in
             self?.sidecarState = state
             self?.sidecarMessage = message
@@ -78,6 +85,7 @@ final class AppState: ObservableObject {
                             translation: $0.translation
                         )
                     }
+                    showTranslationOverlay(for: regions)
                     status = .idle
                     if response.cacheHit == true {
                         message =
@@ -203,6 +211,9 @@ final class AppState: ObservableObject {
         hasReadingArea = false
         recognizedTexts = []
         translations = []
+        pendingTranslationImageSize = nil
+        pendingTranslationReadingArea = nil
+        overlayController.clearTranslations()
         status = .idle
 
         if isOverlayVisible {
@@ -222,7 +233,9 @@ final class AppState: ObservableObject {
         isOverlayVisible = true
         startTrackingWindow()
         status = .idle
-        message = "Test overlay is aligned with \(selectedWindowDescription)."
+        message = translations.isEmpty
+            ? "No translations are available yet."
+            : "Translation overlay is aligned with \(selectedWindowDescription)."
     }
 
     func hideOverlay() {
@@ -246,6 +259,7 @@ final class AppState: ObservableObject {
         isOverlayVisible = false
         recognizedTexts = []
         translations = []
+        overlayController.clearTranslations()
         startTrackingWindow()
         overlayController.selectReadingArea(
             over: selectedWindow.frame,
@@ -277,6 +291,9 @@ final class AppState: ObservableObject {
         hasReadingArea = false
         recognizedTexts = []
         translations = []
+        pendingTranslationImageSize = nil
+        pendingTranslationReadingArea = nil
+        overlayController.clearTranslations()
         message = "Reading area cleared. Captures will use the full window."
     }
 
@@ -321,6 +338,8 @@ final class AppState: ObservableObject {
         }
 
         status = .working
+        overlayController.hide()
+        isOverlayVisible = false
         message = "Capturing \(selectedWindowDescription)…"
 
         do {
@@ -349,6 +368,11 @@ final class AppState: ObservableObject {
             let captureData = try Data(contentsOf: captureURL)
 
             lastCaptureURL = captureURL
+            pendingTranslationImageSize = CGSize(
+                width: imageForOCR.width,
+                height: imageForOCR.height
+            )
+            pendingTranslationReadingArea = normalizedReadingArea
             sidecarClient.translate(imageData: captureData)
             message =
                 "Reading Korean and translating locally…"
@@ -439,6 +463,67 @@ final class AppState: ObservableObject {
 
                 try? await Task.sleep(for: .milliseconds(100))
             }
+        }
+    }
+
+    private func showTranslationOverlay(for regions: [SidecarRegion]) {
+        guard
+            let selectedWindow,
+            let imageSize = pendingTranslationImageSize,
+            imageSize.width > 0,
+            imageSize.height > 0
+        else {
+            return
+        }
+
+        let readingArea = pendingTranslationReadingArea ?? CGRect(
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1
+        )
+        let overlayTranslations: [OverlayTranslation] = regions.compactMap {
+            region in
+            guard region.bbox.count == 4 else { return nil }
+
+            let cropFrame = CGRect(
+                x: CGFloat(region.bbox[0]) / imageSize.width,
+                y: CGFloat(region.bbox[1]) / imageSize.height,
+                width: CGFloat(region.bbox[2]) / imageSize.width,
+                height: CGFloat(region.bbox[3]) / imageSize.height
+            )
+            let windowFrame = CGRect(
+                x: readingArea.minX + cropFrame.minX * readingArea.width,
+                y: readingArea.minY + cropFrame.minY * readingArea.height,
+                width: cropFrame.width * readingArea.width,
+                height: cropFrame.height * readingArea.height
+            )
+            .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+
+            guard
+                windowFrame.width > 0,
+                windowFrame.height > 0,
+                !region.translation.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                ).isEmpty
+            else {
+                return nil
+            }
+
+            return OverlayTranslation(
+                normalizedFrame: windowFrame,
+                text: region.translation,
+                regionType: region.regionType
+            )
+        }
+
+        overlayController.showTranslations(
+            overlayTranslations,
+            over: selectedWindow.frame
+        )
+        isOverlayVisible = !overlayTranslations.isEmpty
+        if isOverlayVisible {
+            startTrackingWindow()
         }
     }
 
