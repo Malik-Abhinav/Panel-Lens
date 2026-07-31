@@ -43,6 +43,7 @@ final class AppState: ObservableObject {
     @Published private(set) var recognizedTexts: [String] = []
     @Published private(set) var translations: [DisplayTranslation] = []
     @Published private(set) var hasReadingArea = false
+    @Published var isAutomaticTranslationEnabled = true
     @Published private(set) var hasScreenCapturePermission =
         CGPreflightScreenCaptureAccess()
 
@@ -53,12 +54,24 @@ final class AppState: ObservableObject {
     private var normalizedReadingArea: CGRect?
     private var pendingTranslationImageSize: CGSize?
     private var pendingTranslationReadingArea: CGRect?
+    private var automaticCaptureTask: Task<Void, Never>?
+    private var lastScrollActivityAt: Date?
+    private var translationInvalidatedByScroll = false
+    private var pendingTranslationFingerprint: [UInt8]?
+    private var lastPresentedFingerprint: [UInt8]?
+    private var lastPresentedRegions: [SidecarRegion] = []
+
+    private let automaticTranslationDelay = Duration.milliseconds(500)
+    private let similarCaptureDifference = 3.0
 
     init() {
         overlayController.onDismissForScroll = { [weak self] in
             guard let self else { return }
             isOverlayVisible = false
             message = "Translation overlay cleared after the page scrolled."
+        }
+        overlayController.onScrollActivity = { [weak self] in
+            self?.handleScrollActivity()
         }
         sidecarClient.onStateChange = { [weak self] state, message in
             self?.sidecarState = state
@@ -78,6 +91,13 @@ final class AppState: ObservableObject {
                         message: resultMessage
                     )
                 } else {
+                    if translationInvalidatedByScroll {
+                        status = .idle
+                        message =
+                            "Page changed while translating. Waiting for the latest viewport…"
+                        scheduleAutomaticCapture()
+                        return
+                    }
                     recognizedTexts = regions.map(\.original)
                     translations = regions.map {
                         DisplayTranslation(
@@ -85,6 +105,8 @@ final class AppState: ObservableObject {
                             translation: $0.translation
                         )
                     }
+                    lastPresentedFingerprint = pendingTranslationFingerprint
+                    lastPresentedRegions = regions
                     showTranslationOverlay(for: regions)
                     status = .idle
                     if response.cacheHit == true {
@@ -117,6 +139,13 @@ final class AppState: ObservableObject {
                         message: error.message
                     )
                 } else {
+                    if translationInvalidatedByScroll {
+                        status = .idle
+                        message =
+                            "Page changed while translating. Waiting for the latest viewport…"
+                        scheduleAutomaticCapture()
+                        return
+                    }
                     sidecarMessage = "Translation failed."
                     status = .error
                     message = "Python processing failed: \(error.message)"
@@ -213,6 +242,8 @@ final class AppState: ObservableObject {
         translations = []
         pendingTranslationImageSize = nil
         pendingTranslationReadingArea = nil
+        cancelAutomaticCapture()
+        clearTranslationHistory()
         overlayController.clearTranslations()
         status = .idle
 
@@ -241,6 +272,7 @@ final class AppState: ObservableObject {
     func hideOverlay() {
         windowTrackingTask?.cancel()
         windowTrackingTask = nil
+        cancelAutomaticCapture()
         overlayController.hide()
         isOverlayVisible = false
         status = .idle
@@ -259,6 +291,7 @@ final class AppState: ObservableObject {
         isOverlayVisible = false
         recognizedTexts = []
         translations = []
+        clearTranslationHistory()
         overlayController.clearTranslations()
         startTrackingWindow()
         overlayController.selectReadingArea(
@@ -293,6 +326,8 @@ final class AppState: ObservableObject {
         translations = []
         pendingTranslationImageSize = nil
         pendingTranslationReadingArea = nil
+        cancelAutomaticCapture()
+        clearTranslationHistory()
         overlayController.clearTranslations()
         message = "Reading area cleared. Captures will use the full window."
     }
@@ -331,6 +366,10 @@ final class AppState: ObservableObject {
     }
 
     func captureSelectedWindow() async {
+        await captureSelectedWindow(automatically: false)
+    }
+
+    private func captureSelectedWindow(automatically: Bool) async {
         guard let selectedWindow else {
             status = .error
             message = "Select a window before capturing."
@@ -338,9 +377,17 @@ final class AppState: ObservableObject {
         }
 
         status = .working
-        overlayController.hide()
+        translationInvalidatedByScroll = false
+        if automatically {
+            overlayController.hideTranslationsWhileMonitoringScroll()
+        } else {
+            cancelAutomaticCapture()
+            overlayController.hide()
+        }
         isOverlayVisible = false
-        message = "Capturing \(selectedWindowDescription)…"
+        message = automatically
+            ? "Page settled. Capturing the new viewport…"
+            : "Capturing \(selectedWindowDescription)…"
 
         do {
             let filter = SCContentFilter(
@@ -364,15 +411,38 @@ final class AppState: ObservableObject {
                 configuration: configuration
             )
             let imageForOCR = try cropToReadingArea(image)
-            let captureURL = try saveDebugCapture(imageForOCR)
-            let captureData = try Data(contentsOf: captureURL)
-
-            lastCaptureURL = captureURL
+            let fingerprint = try captureFingerprint(imageForOCR)
             pendingTranslationImageSize = CGSize(
                 width: imageForOCR.width,
                 height: imageForOCR.height
             )
             pendingTranslationReadingArea = normalizedReadingArea
+            pendingTranslationFingerprint = fingerprint
+            if automatically,
+               let lastPresentedFingerprint,
+               !lastPresentedRegions.isEmpty,
+               fingerprintDifference(
+                   fingerprint,
+                   lastPresentedFingerprint
+               ) <= similarCaptureDifference
+            {
+                recognizedTexts = lastPresentedRegions.map(\.original)
+                translations = lastPresentedRegions.map {
+                    DisplayTranslation(
+                        original: $0.original,
+                        translation: $0.translation
+                    )
+                }
+                showTranslationOverlay(for: lastPresentedRegions)
+                status = .idle
+                message =
+                    "Viewport barely changed. Reused the current translations."
+                return
+            }
+            let captureURL = try saveDebugCapture(imageForOCR)
+            let captureData = try Data(contentsOf: captureURL)
+
+            lastCaptureURL = captureURL
             sidecarClient.translate(imageData: captureData)
             message =
                 "Reading Korean and translating locally…"
@@ -415,6 +485,55 @@ final class AppState: ObservableObject {
         overlayController.hide()
         status = .idle
         self.message = message
+    }
+
+    private func handleScrollActivity() {
+        guard isAutomaticTranslationEnabled, selectedWindow != nil else {
+            return
+        }
+
+        lastScrollActivityAt = Date()
+        if status == .working {
+            translationInvalidatedByScroll = true
+        }
+        scheduleAutomaticCapture()
+    }
+
+    private func scheduleAutomaticCapture() {
+        automaticCaptureTask?.cancel()
+        automaticCaptureTask = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: automaticTranslationDelay)
+            guard !Task.isCancelled else { return }
+            guard isAutomaticTranslationEnabled else { return }
+
+            if status == .working {
+                return
+            }
+
+            if let lastScrollActivityAt {
+                let elapsed = Date().timeIntervalSince(lastScrollActivityAt)
+                if elapsed < 0.5 {
+                    scheduleAutomaticCapture()
+                    return
+                }
+            }
+
+            await captureSelectedWindow(automatically: true)
+        }
+    }
+
+    private func cancelAutomaticCapture() {
+        automaticCaptureTask?.cancel()
+        automaticCaptureTask = nil
+        lastScrollActivityAt = nil
+        translationInvalidatedByScroll = false
+    }
+
+    private func clearTranslationHistory() {
+        pendingTranslationFingerprint = nil
+        lastPresentedFingerprint = nil
+        lastPresentedRegions = []
     }
 
     private func cropToReadingArea(_ image: CGImage) throws -> CGImage {
@@ -588,6 +707,46 @@ final class AppState: ObservableObject {
         }
 
         return fileURL
+    }
+
+    private func captureFingerprint(_ image: CGImage) throws -> [UInt8] {
+        let width = 16
+        let height = 16
+        var pixels = [UInt8](repeating: 0, count: width * height)
+        guard
+            let context = CGContext(
+                data: &pixels,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width,
+                space: CGColorSpaceCreateDeviceGray(),
+                bitmapInfo: CGImageAlphaInfo.none.rawValue
+            )
+        else {
+            throw CaptureError.couldNotCreateImageDestination
+        }
+
+        context.interpolationQuality = .low
+        context.draw(
+            image,
+            in: CGRect(x: 0, y: 0, width: width, height: height)
+        )
+        return pixels
+    }
+
+    private func fingerprintDifference(
+        _ left: [UInt8],
+        _ right: [UInt8]
+    ) -> Double {
+        guard left.count == right.count, !left.isEmpty else {
+            return .infinity
+        }
+
+        let totalDifference = zip(left, right).reduce(0) {
+            $0 + abs(Int($1.0) - Int($1.1))
+        }
+        return Double(totalDifference) / Double(left.count)
     }
 
     private func present(error: Error, action: String) {
