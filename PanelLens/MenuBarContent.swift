@@ -52,11 +52,36 @@ struct MenuBarContent: View {
         .keyboardShortcut("t", modifiers: [.command, .shift])
         .disabled(!appState.canCapture)
 
-        Toggle(
-            "Automatically Translate After Scrolling",
-            isOn: $appState.isAutomaticTranslationEnabled
+        Button(
+            appState.isTranslationSessionActive
+                ? "Pause Translation Session"
+                : "Start Translation Session"
+        ) {
+            if appState.isTranslationSessionActive {
+                appState.pauseTranslationSession()
+            } else {
+                appState.startTranslationSession()
+            }
+        }
+        .disabled(
+            appState.selectedWindowID == nil
+                || (!appState.isTranslationSessionActive
+                    && appState.status == .working)
         )
-        .disabled(appState.selectedWindowID == nil)
+
+        if appState.isTranslationSessionActive {
+            Label(
+                "Context: \(appState.translationContextCount)/20 blocks",
+                systemImage: "text.line.last.and.arrowtriangle.forward"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            Button("Clear Translation Context") {
+                appState.clearTranslationContext()
+            }
+            .disabled(appState.translationContextCount == 0)
+        }
 
         Button("Select Window…") {
             openWindow(id: "window-picker")

@@ -23,5 +23,10 @@ The private roadmap is kept outside Git. See
 - Contextual Korean-to-English translation uses local Ollama/Hy-MT2 7B
 - Translations refresh automatically after meaningful scrolling stops
 - Near-identical viewports reuse positioned results without repeating OCR
+- Reading sessions provide explicit start/pause controls and translate the
+  first viewport immediately
+- Session requests reject stale responses after window, area, or session
+  changes and recover after sidecar restarts
+- Automatic scrolling is scoped to the selected, visible browser window
 - English translations render in a click-through overlay positioned over their
   detected dialogue and narration regions

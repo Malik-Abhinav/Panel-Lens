@@ -43,7 +43,7 @@ final class AppState: ObservableObject {
     @Published private(set) var recognizedTexts: [String] = []
     @Published private(set) var translations: [DisplayTranslation] = []
     @Published private(set) var hasReadingArea = false
-    @Published var isAutomaticTranslationEnabled = true
+    @Published private(set) var isTranslationSessionActive = false
     @Published private(set) var hasScreenCapturePermission =
         CGPreflightScreenCaptureAccess()
 
@@ -61,6 +61,9 @@ final class AppState: ObservableObject {
     private var lastPresentedFingerprint: [UInt8]?
     private var lastPresentedRegions: [SidecarRegion] = []
     private var translationContext: [[String: String]] = []
+    private var translationSessionID = UUID()
+    private var activeTranslationRequestID: String?
+    private var shouldRecoverAfterSidecarRestart = false
 
     private let automaticTranslationDelay = Duration.milliseconds(500)
     private let similarCaptureDifference = 3.0
@@ -75,9 +78,11 @@ final class AppState: ObservableObject {
         overlayController.onScrollActivity = { [weak self] in
             self?.handleScrollActivity()
         }
+        overlayController.shouldHandleScroll = { [weak self] in
+            self?.shouldHandleSelectedBrowserScroll() ?? false
+        }
         sidecarClient.onStateChange = { [weak self] state, message in
-            self?.sidecarState = state
-            self?.sidecarMessage = message
+            self?.handleSidecarStateChange(state, message: message)
         }
         sidecarClient.onResponse = { [weak self] response in
             guard let self else { return }
@@ -93,6 +98,16 @@ final class AppState: ObservableObject {
                         message: resultMessage
                     )
                 } else {
+                    guard response.requestID == activeTranslationRequestID else {
+                        return
+                    }
+                    activeTranslationRequestID = nil
+                    guard isSelectedWindowAvailable() else {
+                        stopTranslationSession(
+                            message: "The selected browser window is no longer available. Translation paused."
+                        )
+                        return
+                    }
                     if translationInvalidatedByScroll {
                         status = .idle
                         message =
@@ -142,6 +157,10 @@ final class AppState: ObservableObject {
                         message: error.message
                     )
                 } else {
+                    guard response.requestID == activeTranslationRequestID else {
+                        return
+                    }
+                    activeTranslationRequestID = nil
                     if translationInvalidatedByScroll {
                         status = .idle
                         message =
@@ -160,6 +179,10 @@ final class AppState: ObservableObject {
 
     var canCapture: Bool {
         selectedWindow != nil && status != .working
+    }
+
+    var translationContextCount: Int {
+        translationContext.count
     }
 
     func refreshWindows() async {
@@ -235,10 +258,12 @@ final class AppState: ObservableObject {
     }
 
     func select(_ option: WindowOption) {
+        stopTranslationSession(message: nil)
         selectedWindow = option.window
         selectedWindowID = option.id
         selectedWindowDescription = "\(option.applicationName) — \(option.title)"
         message = "Ready to capture \(option.applicationName)."
+        isOverlayVisible = false
         normalizedReadingArea = nil
         hasReadingArea = false
         recognizedTexts = []
@@ -273,6 +298,10 @@ final class AppState: ObservableObject {
     }
 
     func hideOverlay() {
+        let pausedSession = isTranslationSessionActive
+        if pausedSession {
+            stopTranslationSession(message: nil)
+        }
         windowTrackingTask?.cancel()
         windowTrackingTask = nil
         cancelAutomaticCapture()
@@ -281,7 +310,60 @@ final class AppState: ObservableObject {
         status = .idle
         message = selectedWindow == nil
             ? "Select a browser window to begin."
-            : "Overlay hidden."
+            : pausedSession
+                ? "Overlay hidden. Automatic translation paused."
+                : "Overlay hidden."
+    }
+
+    func startTranslationSession() {
+        guard selectedWindow != nil else {
+            status = .error
+            message = "Select a browser window before starting translation."
+            return
+        }
+        guard isSelectedWindowAvailable() else {
+            status = .error
+            message = "The selected browser window is hidden or unavailable."
+            return
+        }
+
+        translationSessionID = UUID()
+        activeTranslationRequestID = nil
+        isTranslationSessionActive = true
+        status = .idle
+        message = "Starting translation session…"
+
+        if sidecarState == .ready {
+            Task { await captureSelectedWindow(automatically: true) }
+        } else {
+            shouldRecoverAfterSidecarRestart = true
+            sidecarClient.start()
+            message = "Waiting for the local translation sidecar…"
+        }
+    }
+
+    func pauseTranslationSession() {
+        stopTranslationSession(message: "Automatic translation paused.")
+    }
+
+    func clearTranslationContext() {
+        translationContext = []
+        message = "Translation context cleared for this reading session."
+    }
+
+    private func stopTranslationSession(message: String?) {
+        isTranslationSessionActive = false
+        translationSessionID = UUID()
+        activeTranslationRequestID = nil
+        shouldRecoverAfterSidecarRestart = false
+        cancelAutomaticCapture()
+        overlayController.pauseScrollMonitoring()
+        if status == .working {
+            status = .idle
+        }
+        if let message {
+            self.message = message
+        }
     }
 
     func selectReadingArea() {
@@ -312,6 +394,7 @@ final class AppState: ObservableObject {
                 finishReadingAreaSelection(
                     message: "Reading area saved. Only that part of the webpage will be OCRed."
                 )
+                captureFirstSessionViewportIfNeeded()
             },
             onCancel: { [weak self] in
                 self?.finishReadingAreaSelection(
@@ -333,6 +416,7 @@ final class AppState: ObservableObject {
         clearTranslationHistory()
         overlayController.clearTranslations()
         message = "Reading area cleared. Captures will use the full window."
+        captureFirstSessionViewportIfNeeded()
     }
 
     func testSidecar() {
@@ -378,6 +462,33 @@ final class AppState: ObservableObject {
             message = "Select a window before capturing."
             return
         }
+        if automatically, !isTranslationSessionActive {
+            return
+        }
+        guard isSelectedWindowAvailable() else {
+            if automatically {
+                stopTranslationSession(
+                    message: "The selected browser window is hidden or unavailable. Translation paused."
+                )
+            } else {
+                status = .error
+                message = "The selected browser window is hidden or unavailable."
+            }
+            return
+        }
+        guard sidecarState == .ready else {
+            status = .idle
+            if automatically {
+                shouldRecoverAfterSidecarRestart = true
+                sidecarClient.start()
+                message = "Waiting for the local translation sidecar…"
+            } else {
+                status = .error
+                message = "The local translation sidecar is not ready."
+            }
+            return
+        }
+        let captureSessionID = translationSessionID
 
         status = .working
         translationInvalidatedByScroll = false
@@ -413,6 +524,9 @@ final class AppState: ObservableObject {
                 contentFilter: filter,
                 configuration: configuration
             )
+            guard captureSessionID == translationSessionID else { return }
+            if automatically, !isTranslationSessionActive { return }
+
             let imageForOCR = try cropToReadingArea(image)
             let fingerprint = try captureFingerprint(imageForOCR)
             pendingTranslationImageSize = CGSize(
@@ -444,15 +558,39 @@ final class AppState: ObservableObject {
             }
             let captureURL = try saveDebugCapture(imageForOCR)
             let captureData = try Data(contentsOf: captureURL)
+            guard captureSessionID == translationSessionID else { return }
+
+            guard sidecarState == .ready else {
+                status = .idle
+                if automatically {
+                    shouldRecoverAfterSidecarRestart = true
+                    sidecarClient.start()
+                    message = "The sidecar restarted. Waiting to recapture…"
+                } else {
+                    status = .error
+                    message = "The local translation sidecar stopped before translation began."
+                }
+                return
+            }
 
             lastCaptureURL = captureURL
-            sidecarClient.translate(
+            let requestID = "session-\(translationSessionID.uuidString)-\(UUID().uuidString)"
+            activeTranslationRequestID = requestID
+            let sent = sidecarClient.translate(
                 imageData: captureData,
+                requestID: requestID,
                 context: translationContext
             )
+            guard sent else {
+                activeTranslationRequestID = nil
+                status = .error
+                message = "Could not send the viewport to the local sidecar."
+                return
+            }
             message =
                 "Reading Korean and translating locally…"
         } catch {
+            guard captureSessionID == translationSessionID else { return }
             present(error: error, action: "Capturing the selected window")
         }
     }
@@ -494,7 +632,7 @@ final class AppState: ObservableObject {
     }
 
     private func handleScrollActivity() {
-        guard isAutomaticTranslationEnabled, selectedWindow != nil else {
+        guard isTranslationSessionActive, selectedWindow != nil else {
             return
         }
 
@@ -511,7 +649,7 @@ final class AppState: ObservableObject {
             guard let self else { return }
             try? await Task.sleep(for: automaticTranslationDelay)
             guard !Task.isCancelled else { return }
-            guard isAutomaticTranslationEnabled else { return }
+            guard isTranslationSessionActive else { return }
 
             if status == .working {
                 return
@@ -541,6 +679,69 @@ final class AppState: ObservableObject {
         lastPresentedFingerprint = nil
         lastPresentedRegions = []
         translationContext = []
+    }
+
+    private func captureFirstSessionViewportIfNeeded() {
+        guard isTranslationSessionActive else { return }
+        translationSessionID = UUID()
+        activeTranslationRequestID = nil
+        status = .idle
+        Task { await captureSelectedWindow(automatically: true) }
+    }
+
+    private func handleSidecarStateChange(
+        _ state: SidecarState,
+        message: String
+    ) {
+        sidecarState = state
+        sidecarMessage = message
+
+        if state == .starting,
+           isTranslationSessionActive,
+           (activeTranslationRequestID != nil || status == .working)
+        {
+            shouldRecoverAfterSidecarRestart = true
+            activeTranslationRequestID = nil
+            status = .idle
+        }
+
+        if state == .ready,
+           isTranslationSessionActive,
+           shouldRecoverAfterSidecarRestart
+        {
+            shouldRecoverAfterSidecarRestart = false
+            status = .idle
+            Task { await captureSelectedWindow(automatically: true) }
+        }
+    }
+
+    private func shouldHandleSelectedBrowserScroll() -> Bool {
+        guard
+            isTranslationSessionActive,
+            let selectedWindow,
+            let application = selectedWindow.owningApplication,
+            NSWorkspace.shared.frontmostApplication?.processIdentifier
+                == application.processID,
+            isSelectedWindowAvailable()
+        else {
+            return false
+        }
+
+        guard
+            let selectedWindowID,
+            let currentFrame = Self.windowFrame(for: selectedWindowID),
+            let cursorLocation = CGEvent(source: nil)?.location
+        else {
+            return true
+        }
+        return currentFrame.insetBy(dx: -4, dy: -4).contains(
+            cursorLocation
+        )
+    }
+
+    private func isSelectedWindowAvailable() -> Bool {
+        guard let selectedWindowID else { return false }
+        return Self.windowFrame(for: selectedWindowID) != nil
     }
 
     private func rememberTranslationContext(from regions: [SidecarRegion]) {
@@ -671,7 +872,8 @@ final class AppState: ObservableObject {
 
         overlayController.showTranslations(
             overlayTranslations,
-            over: selectedWindow.frame
+            over: selectedWindow.frame,
+            monitorScroll: isTranslationSessionActive
         )
         isOverlayVisible = !overlayTranslations.isEmpty
         if isOverlayVisible {
@@ -688,6 +890,7 @@ final class AppState: ObservableObject {
                 windowID
             ) as? [[String: Any]],
             let entry = windowInfo.first,
+            (entry[kCGWindowIsOnscreen as String] as? Bool) == true,
             let boundsDictionary = entry[
                 kCGWindowBounds as String
             ] as? NSDictionary
