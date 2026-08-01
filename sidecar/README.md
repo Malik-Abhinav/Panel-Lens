@@ -85,7 +85,9 @@ Wrapped OCR lines are grouped using both geometry and the connected light
 background around them. This keeps multiline dialogue together inside one
 balloon while preventing nearby, separately bounded balloons from being
 translated as one sentence. Non-bubble narration falls back to geometric
-grouping.
+grouping. A light component must surround the OCR rectangle; white or outlined
+lettering inside a dark or colored narration box is not mistaken for a bubble
+component, so its aligned lines can still be grouped and classified as prose.
 
 ```sh
 PANELLENS_MINIMUM_BUBBLE_SCORE=0.55

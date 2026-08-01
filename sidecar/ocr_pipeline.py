@@ -189,11 +189,22 @@ def _surrounding_component(
     if nearby_labels.size == 0:
         return None
 
-    component_ids, counts = np.unique(nearby_labels, return_counts=True)
+    ring_mask = np.ones(nearby_labels.shape, dtype=bool)
+    inner_x1 = max(0, round(left) - x1)
+    inner_y1 = max(0, round(top) - y1)
+    inner_x2 = min(nearby_labels.shape[1], round(left + width) - x1)
+    inner_y2 = min(nearby_labels.shape[0], round(top + height) - y1)
+    ring_mask[inner_y1:inner_y2, inner_x1:inner_x2] = False
+    ring_labels = nearby_labels[ring_mask]
+    component_ids, counts = np.unique(ring_labels, return_counts=True)
+    minimum_ring_pixels = max(8, round(ring_labels.size * 0.15))
     candidates = [
         (int(count), int(component_id))
         for component_id, count in zip(component_ids, counts, strict=True)
-        if int(component_id) in valid_components
+        if (
+            int(component_id) in valid_components
+            and int(count) >= minimum_ring_pixels
+        )
     ]
     if not candidates:
         return None
