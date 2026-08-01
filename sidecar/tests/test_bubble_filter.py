@@ -13,6 +13,32 @@ def _png_with_background(color: tuple[int, int, int]) -> bytes:
     return output.getvalue()
 
 
+def _png_with_translucent_bubble() -> bytes:
+    y, x = np.indices((160, 200))
+    artwork = np.stack(
+        (
+            70 + (x % 60),
+            45 + (y % 70),
+            80 + ((x + y) % 80),
+        ),
+        axis=2,
+    ).astype(np.uint8)
+    bubble = ((x - 100) / 72) ** 2 + ((y - 80) / 58) ** 2 <= 1
+    blended = artwork.astype(np.float32)
+    blended[bubble] = blended[bubble] * 0.22 + 255 * 0.78
+    output = io.BytesIO()
+    Image.fromarray(blended.astype(np.uint8)).save(output, format="PNG")
+    return output.getvalue()
+
+
+def _png_with_colored_sound_effect() -> bytes:
+    pixels = np.full((160, 200, 3), 250, dtype=np.uint8)
+    pixels[55:105, 75:125] = (170, 25, 35)
+    output = io.BytesIO()
+    Image.fromarray(pixels).save(output, format="PNG")
+    return output.getvalue()
+
+
 def _region() -> dict[str, object]:
     return {
         "bbox": [50, 40, 100, 60],
@@ -39,6 +65,35 @@ def test_colored_artwork_region_is_filtered() -> None:
     kept, filtered_count = filter_dialogue_regions(
         _png_with_background((220, 150, 170)),
         [_region()],
+    )
+
+    assert kept == []
+    assert filtered_count == 1
+
+
+def test_translucent_bubble_dialogue_is_kept() -> None:
+    region = _region()
+    region["original"] = "아랫배가 너무 아파!!"
+    region["bbox"] = [58, 58, 84, 44]
+
+    kept, filtered_count = filter_dialogue_regions(
+        _png_with_translucent_bubble(),
+        [region],
+    )
+
+    assert filtered_count == 0
+    assert kept[0]["region_type"] == "dialogue"
+    assert kept[0]["bubble_style"] == "translucent"
+
+
+def test_short_colored_sound_effect_on_white_is_filtered() -> None:
+    region = _region()
+    region["original"] = "툭"
+    region["bbox"] = [75, 55, 50, 50]
+
+    kept, filtered_count = filter_dialogue_regions(
+        _png_with_colored_sound_effect(),
+        [region],
     )
 
     assert kept == []

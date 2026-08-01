@@ -361,3 +361,41 @@ def test_group_ocr_lines_preserves_connected_narration_over_artwork() -> None:
 
     assert len(groups) == 1
     assert groups[0]["original"] == "그날의 기억은 아직 선명했다."
+
+
+def test_group_ocr_lines_does_not_treat_light_lettering_as_bubble_component() -> None:
+    image = np.full((180, 300, 3), (65, 35, 55), dtype=np.uint8)
+    lines = [
+        {
+            "bbox": [82, 35, 136, 30],
+            "original": "내가 정말",
+            "translation": "",
+            "language": "ko",
+            "confidence": 0.99,
+        },
+        {
+            "bbox": [48, 65, 204, 30],
+            "original": "공작 부인이",
+            "translation": "",
+            "language": "ko",
+            "confidence": 0.98,
+        },
+        {
+            "bbox": [70, 95, 160, 30],
+            "original": "맞느냐?",
+            "translation": "",
+            "language": "ko",
+            "confidence": 0.97,
+        },
+    ]
+    for left, top, width, height in (line["bbox"] for line in lines):
+        x1 = round(left + width * 0.15)
+        x2 = round(left + width * 0.85)
+        y1 = round(top + height * 0.3)
+        y2 = round(top + height * 0.7)
+        image[y1:y2, x1:x2] = 245
+
+    groups = group_ocr_lines(lines, image)
+
+    assert len(groups) == 1
+    assert groups[0]["original"] == "내가 정말 공작 부인이 맞느냐?"
