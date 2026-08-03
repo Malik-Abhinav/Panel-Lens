@@ -64,6 +64,7 @@ final class AppState: ObservableObject {
     private var translationSessionID = UUID()
     private var activeTranslationRequestID: String?
     private var shouldRecoverAfterSidecarRestart = false
+    private var overlayHiddenForAppSwitch = false
 
     private let automaticTranslationDelay = Duration.milliseconds(500)
     private let similarCaptureDifference = 3.0
@@ -810,13 +811,32 @@ final class AppState: ObservableObject {
 
         windowTrackingTask = Task { [weak self] in
             while !Task.isCancelled {
-                if let frame = Self.windowFrame(for: selectedWindowID) {
-                    self?.overlayController.updateFrame(frame)
+                guard let self else { return }
+                let isFrontmost = self.isSelectedApplicationFrontmost()
+                if !isFrontmost {
+                    if self.isOverlayVisible && !self.overlayHiddenForAppSwitch {
+                        self.overlayController.temporarilyHide()
+                        self.overlayHiddenForAppSwitch = true
+                    }
+                } else if let frame = Self.windowFrame(for: selectedWindowID) {
+                    self.overlayController.updateFrame(frame)
+                    if self.isOverlayVisible && self.overlayHiddenForAppSwitch {
+                        self.overlayController.show(over: frame)
+                        self.overlayHiddenForAppSwitch = false
+                    }
                 }
 
                 try? await Task.sleep(for: .milliseconds(100))
             }
         }
+    }
+
+    private func isSelectedApplicationFrontmost() -> Bool {
+        guard let processID = selectedWindow?.owningApplication?.processID else {
+            return false
+        }
+        return NSWorkspace.shared.frontmostApplication?.processIdentifier
+            == processID
     }
 
     private func showTranslationOverlay(for regions: [SidecarRegion]) {
@@ -876,6 +896,12 @@ final class AppState: ObservableObject {
             monitorScroll: isTranslationSessionActive
         )
         isOverlayVisible = !overlayTranslations.isEmpty
+        if isOverlayVisible && !isSelectedApplicationFrontmost() {
+            overlayController.temporarilyHide()
+            overlayHiddenForAppSwitch = true
+        } else {
+            overlayHiddenForAppSwitch = false
+        }
         if isOverlayVisible {
             startTrackingWindow()
         }

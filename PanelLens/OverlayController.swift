@@ -21,7 +21,7 @@ final class OverlayController {
     private var lastScrollEventAt: Date?
     private var dismissedForCurrentScroll = false
 
-    private let scrollDismissThreshold: CGFloat = 60
+    private let scrollDismissThreshold: CGFloat = 24
     private let scrollSequenceTimeout: TimeInterval = 0.6
 
     init() {
@@ -82,6 +82,10 @@ final class OverlayController {
     func hideTranslationsWhileMonitoringScroll() {
         translations = []
         renderTranslations()
+        panel.orderOut(nil)
+    }
+
+    func temporarilyHide() {
         panel.orderOut(nil)
     }
 
