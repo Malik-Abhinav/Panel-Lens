@@ -9,13 +9,23 @@ from translation_pipeline import TranslationError
 
 
 def test_ping_returns_pong() -> None:
-    result = handle({"type": "ping", "request_id": "test-1"})
+    runtime = {
+        "ready": True,
+        "code": "ready",
+        "model": "hy-mt2:7b",
+        "message": "Local OCR and hy-mt2:7b are ready.",
+    }
+    result = handle(
+        {"type": "ping", "request_id": "test-1"},
+        runtime_handler=lambda: runtime,
+    )
 
     assert result == {
         "protocol_version": 1,
         "request_id": "test-1",
         "status": "ok",
         "type": "pong",
+        "runtime": runtime,
     }
 
 

@@ -76,7 +76,9 @@ final class AppState: ObservableObject {
     private let translationContextLimit = 20
 
     init() {
-        startPerformanceTimer()
+        if UserDefaults.standard.bool(forKey: "showPerformanceDiagnostics") {
+            startPerformanceTimer()
+        }
         overlayController.onDismissForScroll = { [weak self] in
             guard let self else { return }
             isOverlayVisible = false
@@ -190,6 +192,22 @@ final class AppState: ObservableObject {
 
     var translationContextCount: Int {
         translationContext.count
+    }
+
+    func setPerformanceMonitoringEnabled(_ enabled: Bool) {
+        if enabled {
+            startPerformanceTimer()
+        } else {
+            performanceTimer?.invalidate()
+            performanceTimer = nil
+            lastTaskSamples = [:]
+            resourceSnapshot = nil
+        }
+    }
+
+    func checkLocalRuntime() {
+        sidecarMessage = "Checking local OCR and translation runtime…"
+        sidecarClient.checkRuntime()
     }
 
     func refreshWindows() async {
@@ -719,6 +737,11 @@ final class AppState: ObservableObject {
     ) {
         sidecarState = state
         sidecarMessage = message
+
+        if state == .error, isTranslationSessionActive {
+            stopTranslationSession(message: message)
+            status = .error
+        }
 
         if state == .starting,
            isTranslationSessionActive,

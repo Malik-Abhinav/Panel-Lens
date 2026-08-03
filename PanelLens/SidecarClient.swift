@@ -41,6 +41,7 @@ struct SidecarResponse: Decodable {
     let detectedTextCount: Int?
     let filteredTextCount: Int?
     let error: SidecarError?
+    let runtime: SidecarRuntime?
 
     enum CodingKeys: String, CodingKey {
         case requestID = "request_id"
@@ -54,7 +55,15 @@ struct SidecarResponse: Decodable {
         case detectedTextCount = "detected_text_count"
         case filteredTextCount = "filtered_text_count"
         case error
+        case runtime
     }
+}
+
+struct SidecarRuntime: Decodable {
+    let ready: Bool
+    let code: String
+    let model: String
+    let message: String
 }
 
 struct SidecarError: Decodable {
@@ -168,6 +177,14 @@ final class SidecarClient {
         )
     }
 
+    func checkRuntime() {
+        if process?.isRunning == true {
+            sendPing()
+        } else {
+            start()
+        }
+    }
+
     func translate(
         imageData: Data,
         requestID: String,
@@ -261,7 +278,14 @@ final class SidecarClient {
     private func handle(_ response: SidecarResponse) {
         if response.status == "ok", response.type == "pong" {
             restartAttempts = 0
-            publish(.ready, "Python sidecar is ready.")
+            if let runtime = response.runtime, !runtime.ready {
+                publish(.error, runtime.message)
+            } else {
+                publish(
+                    .ready,
+                    response.runtime?.message ?? "Python sidecar is ready."
+                )
+            }
         } else if response.status == "error" {
             publish(
                 .error,

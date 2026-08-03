@@ -36,7 +36,7 @@ struct PanelLensApp: App {
         .defaultSize(width: 620, height: 460)
 
         Settings {
-            SettingsView()
+            SettingsView(appState: appState)
         }
     }
 }

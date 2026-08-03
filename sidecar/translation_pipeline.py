@@ -37,6 +37,47 @@ class TranslationError(RuntimeError):
         self.code = code
 
 
+def translation_runtime_status() -> dict[str, Any]:
+    """Report whether Ollama and the configured local model are available."""
+    request = urllib.request.Request(
+        f"{OLLAMA_BASE_URL}/api/tags",
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=2) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        return {
+            "ready": False,
+            "code": "ollama_offline",
+            "model": OLLAMA_MODEL,
+            "message": "Ollama is not running. Start Ollama, then retry.",
+        }
+
+    installed = {
+        str(item.get("name") or item.get("model") or "")
+        for item in payload.get("models", [])
+        if isinstance(item, dict)
+    }
+    if OLLAMA_MODEL not in installed:
+        return {
+            "ready": False,
+            "code": "model_missing",
+            "model": OLLAMA_MODEL,
+            "message": (
+                f"The local model {OLLAMA_MODEL} is not installed. "
+                "Install it in Ollama, then retry."
+            ),
+        }
+
+    return {
+        "ready": True,
+        "code": "ready",
+        "model": OLLAMA_MODEL,
+        "message": f"Local OCR and {OLLAMA_MODEL} are ready.",
+    }
+
+
 def warm_translation_model() -> bool:
     """Ask Ollama to load the model without generating any text."""
     payload = {

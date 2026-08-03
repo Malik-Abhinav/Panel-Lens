@@ -5,6 +5,8 @@ struct MenuBarContent: View {
     @ObservedObject var appState: AppState
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
+    @AppStorage("showPerformanceDiagnostics")
+    private var showPerformanceDiagnostics = false
 
     var body: some View {
         Text(appState.selectedWindowDescription)
@@ -42,11 +44,15 @@ struct MenuBarContent: View {
             }
         }
 
-        Divider()
+        if showPerformanceDiagnostics {
+            Divider()
 
-        performanceSummary
+            performanceSummary
 
-        Divider()
+            Divider()
+        } else {
+            Divider()
+        }
 
         Button("Translate Visible Area") {
             Task {
@@ -124,10 +130,10 @@ struct MenuBarContent: View {
 
         Button(
             appState.sidecarState == .ready
-                ? "Test Python Sidecar"
-                : "Start Python Sidecar"
+                ? "Check Local Runtime"
+                : "Retry Local Runtime"
         ) {
-            appState.testSidecar()
+            appState.checkLocalRuntime()
         }
 
         if !appState.hasScreenCapturePermission {
