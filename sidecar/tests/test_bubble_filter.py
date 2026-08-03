@@ -39,6 +39,18 @@ def _png_with_colored_sound_effect() -> bytes:
     return output.getvalue()
 
 
+def _png_with_inverse_bubble() -> bytes:
+    pixels = np.full((160, 200, 3), (245, 225, 230), dtype=np.uint8)
+    y, x = np.indices((160, 200))
+    bubble = ((x - 100) / 78) ** 2 + ((y - 80) / 65) ** 2 <= 1
+    pixels[bubble] = (48, 22, 29)
+    pixels[62:68, 70:130] = (248, 225, 220)
+    pixels[91:97, 62:138] = (248, 225, 220)
+    output = io.BytesIO()
+    Image.fromarray(pixels).save(output, format="PNG")
+    return output.getvalue()
+
+
 def _region() -> dict[str, object]:
     return {
         "bbox": [50, 40, 100, 60],
@@ -84,6 +96,35 @@ def test_translucent_bubble_dialogue_is_kept() -> None:
     assert filtered_count == 0
     assert kept[0]["region_type"] == "dialogue"
     assert kept[0]["bubble_style"] == "translucent"
+
+
+def test_light_text_in_dark_bubble_is_kept() -> None:
+    region = _region()
+    region["original"] = "에리카 황녀 전하."
+    region["line_count"] = 2
+
+    kept, filtered_count = filter_dialogue_regions(
+        _png_with_inverse_bubble(),
+        [region],
+    )
+
+    assert filtered_count == 0
+    assert kept[0]["region_type"] == "dialogue"
+    assert kept[0]["bubble_style"] == "inverse"
+
+
+def test_short_light_sound_effect_in_dark_art_is_filtered() -> None:
+    region = _region()
+    region["original"] = "번쩍"
+    region["bbox"] = [70, 55, 60, 50]
+
+    kept, filtered_count = filter_dialogue_regions(
+        _png_with_inverse_bubble(),
+        [region],
+    )
+
+    assert kept == []
+    assert filtered_count == 1
 
 
 def test_short_colored_sound_effect_on_white_is_filtered() -> None:

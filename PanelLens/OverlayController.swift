@@ -12,6 +12,7 @@ struct OverlayTranslation: Identifiable {
 final class OverlayController {
     var onDismissForScroll: (() -> Void)?
     var onScrollActivity: (() -> Void)?
+    var shouldHandleScroll: (() -> Bool)?
 
     private let panel: NSPanel
     private var translations: [OverlayTranslation] = []
@@ -20,7 +21,7 @@ final class OverlayController {
     private var lastScrollEventAt: Date?
     private var dismissedForCurrentScroll = false
 
-    private let scrollDismissThreshold: CGFloat = 60
+    private let scrollDismissThreshold: CGFloat = 24
     private let scrollSequenceTimeout: TimeInterval = 0.6
 
     init() {
@@ -56,11 +57,20 @@ final class OverlayController {
 
     func showTranslations(
         _ translations: [OverlayTranslation],
-        over windowFrame: CGRect
+        over windowFrame: CGRect,
+        monitorScroll: Bool = true
     ) {
         self.translations = translations
-        startMonitoringScroll()
+        if monitorScroll {
+            startMonitoringScroll()
+        } else {
+            stopMonitoringScroll()
+        }
         show(over: windowFrame)
+    }
+
+    func pauseScrollMonitoring() {
+        stopMonitoringScroll()
     }
 
     func clearTranslations() {
@@ -72,6 +82,10 @@ final class OverlayController {
     func hideTranslationsWhileMonitoringScroll() {
         translations = []
         renderTranslations()
+        panel.orderOut(nil)
+    }
+
+    func temporarilyHide() {
         panel.orderOut(nil)
     }
 
@@ -136,6 +150,8 @@ final class OverlayController {
     }
 
     private func handleScroll(_ event: NSEvent) {
+        guard shouldHandleScroll?() != false else { return }
+
         let now = Date()
         if dismissedForCurrentScroll {
             lastScrollEventAt = now

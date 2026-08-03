@@ -67,6 +67,11 @@ final class SidecarClient {
     var onStateChange: ((SidecarState, String) -> Void)?
     var onResponse: ((SidecarResponse) -> Void)?
 
+    /// The process identifier of the running Python sidecar, if any. Used by
+    /// the performance monitor to report how much CPU and memory OCR/translation
+    /// consume.
+    var runningProcessPID: Int32? { process?.processIdentifier }
+
     private var process: Process?
     private var inputHandle: FileHandle?
     private var outputBuffer = Data()
@@ -165,10 +170,11 @@ final class SidecarClient {
 
     func translate(
         imageData: Data,
+        requestID: String,
         series: String = "",
         chapter: Int? = nil,
         context: [[String: String]] = []
-    ) {
+    ) -> Bool {
         var payload: [String: Any] = [
             "image_base64": imageData.base64EncodedString(),
             "series": series,
@@ -178,7 +184,11 @@ final class SidecarClient {
             payload["chapter"] = chapter
         }
 
-        send(type: "translate", payload: payload)
+        return send(
+            type: "translate",
+            requestID: requestID,
+            payload: payload
+        )
     }
 
     func stop() {
@@ -194,14 +204,15 @@ final class SidecarClient {
         send(type: "ping")
     }
 
+    @discardableResult
     private func send(
         type: String,
         requestID: String = UUID().uuidString,
         payload: [String: Any] = [:]
-    ) {
+    ) -> Bool {
         guard process?.isRunning == true, let inputHandle else {
             publish(.error, "Python sidecar is not running.")
-            return
+            return false
         }
 
         var message = payload
@@ -213,11 +224,13 @@ final class SidecarClient {
             var data = try JSONSerialization.data(withJSONObject: message)
             data.append(0x0A)
             try inputHandle.write(contentsOf: data)
+            return true
         } catch {
             publish(
                 .error,
                 "Sending to Python failed: \(error.localizedDescription)"
             )
+            return false
         }
     }
 

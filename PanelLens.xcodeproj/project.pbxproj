@@ -10,6 +10,7 @@
 		194065C34EAFFA0D19B92921 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32F59314FE41983CF7BE6768 /* AppState.swift */; };
 		3077BD11DF1AB4FAB8917573 /* SidecarClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65781FE7706E89AF96983D21 /* SidecarClient.swift */; };
 		4AF40CDC791616E9405E928A /* MenuBarContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC3EFC389176034D118EAA14 /* MenuBarContent.swift */; };
+		50F9EB7C891431B44FD6196A /* PerformanceMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49328FFD8A6488E284B24CD7 /* PerformanceMonitor.swift */; };
 		73EF8610934F2A1586878B52 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C9EC4698777C620E5D39304 /* SettingsView.swift */; };
 		BDB53CACA0B47DD2A9281F0B /* PanelLensApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6375C284098B4D1FCD6D1022 /* PanelLensApp.swift */; };
 		C905DCCD766AFD8AD9DCE387 /* OverlayController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 093581266FB77CC5F0F1468D /* OverlayController.swift */; };
@@ -20,6 +21,7 @@
 		093581266FB77CC5F0F1468D /* OverlayController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayController.swift; sourceTree = "<group>"; };
 		1C9EC4698777C620E5D39304 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		32F59314FE41983CF7BE6768 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		49328FFD8A6488E284B24CD7 /* PerformanceMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceMonitor.swift; sourceTree = "<group>"; };
 		6375C284098B4D1FCD6D1022 /* PanelLensApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelLensApp.swift; sourceTree = "<group>"; };
 		65781FE7706E89AF96983D21 /* SidecarClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidecarClient.swift; sourceTree = "<group>"; };
 		955E56E3ABAFC6631884FA04 /* PanelLens.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PanelLens.entitlements; sourceTree = "<group>"; };
@@ -45,6 +47,7 @@
 				093581266FB77CC5F0F1468D /* OverlayController.swift */,
 				955E56E3ABAFC6631884FA04 /* PanelLens.entitlements */,
 				6375C284098B4D1FCD6D1022 /* PanelLensApp.swift */,
+				49328FFD8A6488E284B24CD7 /* PerformanceMonitor.swift */,
 				1C9EC4698777C620E5D39304 /* SettingsView.swift */,
 				65781FE7706E89AF96983D21 /* SidecarClient.swift */,
 				AEB40A0062FD30C9403A8120 /* WindowPickerView.swift */,
@@ -123,6 +126,7 @@
 				4AF40CDC791616E9405E928A /* MenuBarContent.swift in Sources */,
 				C905DCCD766AFD8AD9DCE387 /* OverlayController.swift in Sources */,
 				BDB53CACA0B47DD2A9281F0B /* PanelLensApp.swift in Sources */,
+				50F9EB7C891431B44FD6196A /* PerformanceMonitor.swift in Sources */,
 				73EF8610934F2A1586878B52 /* SettingsView.swift in Sources */,
 				3077BD11DF1AB4FAB8917573 /* SidecarClient.swift in Sources */,
 				DEB417242B698E153F1622A8 /* WindowPickerView.swift in Sources */,

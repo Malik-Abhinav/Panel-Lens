@@ -40,6 +40,7 @@ def filter_dialogue_regions(
             image,
             region["bbox"],
         )
+        inverse_score = _inverse_bubble_score(image, region["bbox"])
         narration_score = _narration_score(region)
         decorative_colored_text = _is_decorative_colored_text(
             image,
@@ -51,12 +52,14 @@ def filter_dialogue_regions(
             translucent_score,
             narration_score,
         )
+        inverse_dialogue = _is_inverse_dialogue(region, inverse_score)
         if (
             decorative_colored_text
             or (
                 bubble_score < MINIMUM_BUBBLE_SCORE
                 and narration_score < MINIMUM_NARRATION_SCORE
                 and not translucent_dialogue
+                and not inverse_dialogue
             )
         ):
             continue
@@ -66,6 +69,10 @@ def filter_dialogue_regions(
             candidate["bubble_confidence"] = round(bubble_score, 4)
             candidate["region_type"] = "dialogue"
             candidate["bubble_style"] = "opaque"
+        elif inverse_dialogue:
+            candidate["bubble_confidence"] = round(inverse_score, 4)
+            candidate["region_type"] = "dialogue"
+            candidate["bubble_style"] = "inverse"
         elif translucent_dialogue:
             candidate["bubble_confidence"] = round(translucent_score, 4)
             candidate["region_type"] = "dialogue"
@@ -148,6 +155,44 @@ def _translucent_bubble_score(
         + uniformity * 0.35
         + neutrality * 0.20
     )
+
+
+def _inverse_bubble_score(image: np.ndarray, bbox: list[float]) -> float:
+    """Score a coherent dark bubble surrounding light-colored lettering."""
+    crop = _expanded_crop(image, bbox)
+    if crop.size == 0:
+        return 0.0
+
+    luminance = (
+        crop[:, :, 0] * 0.2126
+        + crop[:, :, 1] * 0.7152
+        + crop[:, :, 2] * 0.0722
+    )
+    # Lettering and antialiasing occupy a minority of the crop. Measuring the
+    # darker majority makes the score tolerant of textured, colored bubbles.
+    dark_share = float((luminance <= 115).mean())
+    dark_pixels = luminance[luminance <= 150]
+    if dark_pixels.size < 16:
+        return 0.0
+    darkness = np.clip((145.0 - np.median(dark_pixels)) / 100.0, 0.0, 1.0)
+    return float(dark_share * 0.65 + darkness * 0.35)
+
+
+def _is_inverse_dialogue(
+    region: dict[str, Any],
+    inverse_score: float,
+) -> bool:
+    """Accept sentence-like light text on dark bubbles, not isolated SFX."""
+    if inverse_score < 0.62 or float(region.get("confidence", 0.0)) < 0.85:
+        return False
+
+    text = re.sub(r"\s+", " ", str(region.get("original", "")).strip())
+    hangul_count = len(re.findall(r"[가-힣]", text))
+    line_count = int(region.get("line_count", 1))
+    # Multi-line layout is a strong bubble signal. Keeping this intentionally
+    # strict avoids reclassifying prose, page labels, and stylized SFX merely
+    # because they happen to sit over dark artwork.
+    return hangul_count >= 5 and line_count >= 2
 
 
 def _is_translucent_dialogue(

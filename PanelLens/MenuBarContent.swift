@@ -44,6 +44,10 @@ struct MenuBarContent: View {
 
         Divider()
 
+        performanceSummary
+
+        Divider()
+
         Button("Translate Visible Area") {
             Task {
                 await appState.captureSelectedWindow()
@@ -52,11 +56,36 @@ struct MenuBarContent: View {
         .keyboardShortcut("t", modifiers: [.command, .shift])
         .disabled(!appState.canCapture)
 
-        Toggle(
-            "Automatically Translate After Scrolling",
-            isOn: $appState.isAutomaticTranslationEnabled
+        Button(
+            appState.isTranslationSessionActive
+                ? "Pause Translation Session"
+                : "Start Translation Session"
+        ) {
+            if appState.isTranslationSessionActive {
+                appState.pauseTranslationSession()
+            } else {
+                appState.startTranslationSession()
+            }
+        }
+        .disabled(
+            appState.selectedWindowID == nil
+                || (!appState.isTranslationSessionActive
+                    && appState.status == .working)
         )
-        .disabled(appState.selectedWindowID == nil)
+
+        if appState.isTranslationSessionActive {
+            Label(
+                "Context: \(appState.translationContextCount)/20 blocks",
+                systemImage: "text.line.last.and.arrowtriangle.forward"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            Button("Clear Translation Context") {
+                appState.clearTranslationContext()
+            }
+            .disabled(appState.translationContextCount == 0)
+        }
 
         Button("Select Window…") {
             openWindow(id: "window-picker")
@@ -124,6 +153,87 @@ struct MenuBarContent: View {
             NSApplication.shared.terminate(nil)
         }
         .keyboardShortcut("q")
+    }
+
+    private var performanceSummary: some View {
+        guard let snapshot = appState.resourceSnapshot else {
+            return AnyView(
+                Text("Performance info unavailable yet…")
+                    .font(.caption)
+            )
+        }
+
+        let batteryText = snapshot.batteryPercent.map { "\($0)%" } ?? "—"
+        let batteryIcon = snapshot.isCharging ? "bolt.fill" : "battery.75"
+        let ramText = String(
+            format: "%.1f / %.1f GB",
+            snapshot.systemUsedGB,
+            snapshot.systemTotalGB
+        )
+        let appText = String(
+            format: "%.0f MB  •  ~%.0f%% CPU",
+            snapshot.appMemoryMB,
+            snapshot.appCPUPercent
+        )
+        let sidecarText = String(
+            format: "%.0f MB  •  ~%.0f%% CPU",
+            snapshot.sidecarMemoryMB,
+            snapshot.sidecarCPUPercent
+        )
+        let ollamaText = String(
+            format: "%.0f MB  •  ~%.0f%% CPU",
+            snapshot.ollamaMemoryMB,
+            snapshot.ollamaCPUPercent
+        )
+
+        return AnyView(
+            VStack(alignment: .leading, spacing: 4) {
+                Label(
+                    "Performance & Battery",
+                    systemImage: snapshot.memoryPressureHigh
+                        ? "exclamationmark.triangle"
+                        : "gauge"
+                )
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(
+                    snapshot.memoryPressureHigh ? .orange : .primary
+                )
+
+                HStack {
+                    Image(systemName: batteryIcon)
+                    Text(
+                        "Battery \(batteryText)"
+                            + (snapshot.isCharging ? " · Charging" : "")
+                    )
+                }
+                .font(.caption)
+
+                Text(
+                    "RAM \(ramText)"
+                        + (snapshot.memoryPressureHigh ? " · High" : "")
+                )
+                .font(.caption)
+                .foregroundStyle(
+                    snapshot.memoryPressureHigh ? .orange : .secondary
+                )
+
+                Text("PanelLens: \(appText)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Sidecar: \(sidecarText)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Ollama (model): \(ollamaText)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text(
+                    "Ollama keeps the translation model resident in RAM — it is the main battery and memory cost."
+                )
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            }
+        )
     }
 
     private var sidecarStatusImage: String {
