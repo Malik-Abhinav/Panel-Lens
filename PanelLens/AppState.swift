@@ -30,7 +30,8 @@ final class AppState: ObservableObject {
         }
     }
 
-    @Published var status: Status = .idle
+    @Published private(set) var status: Status = .idle
+    @Published private(set) var resourceSnapshot: ResourceSnapshot?
     @Published var selectedWindowDescription = "No window selected"
     @Published private(set) var availableWindows: [WindowOption] = []
     @Published private(set) var selectedWindowID: CGWindowID?
@@ -65,12 +66,17 @@ final class AppState: ObservableObject {
     private var activeTranslationRequestID: String?
     private var shouldRecoverAfterSidecarRestart = false
     private var overlayHiddenForAppSwitch = false
+    private var lastWindowTitle = ""
+    private var lastViewportCheckAt = Date.distantPast
+    private var performanceTimer: Timer?
+    private var lastTaskSamples: [Int32: (sample: PerformanceMonitor.TaskSample, date: Date)] = [:]
 
     private let automaticTranslationDelay = Duration.milliseconds(500)
     private let similarCaptureDifference = 3.0
     private let translationContextLimit = 20
 
     init() {
+        startPerformanceTimer()
         overlayController.onDismissForScroll = { [weak self] in
             guard let self else { return }
             isOverlayVisible = false
@@ -274,6 +280,7 @@ final class AppState: ObservableObject {
         cancelAutomaticCapture()
         clearTranslationHistory()
         overlayController.clearTranslations()
+        lastWindowTitle = ""
         status = .idle
 
         if isOverlayVisible {
@@ -331,6 +338,8 @@ final class AppState: ObservableObject {
         translationSessionID = UUID()
         activeTranslationRequestID = nil
         isTranslationSessionActive = true
+        lastWindowTitle = ""
+        lastViewportCheckAt = .distantPast
         status = .idle
         message = "Starting translation session…"
 
@@ -454,7 +463,19 @@ final class AppState: ObservableObject {
     }
 
     func captureSelectedWindow() async {
-        await captureSelectedWindow(automatically: false)
+        guard selectedWindow != nil else {
+            status = .error
+            message = "Select a window before capturing."
+            return
+        }
+        // Translating the visible area begins a translation session so that
+        // scrolling dismisses the old overlay and translates the new viewport,
+        // and switching browser tabs does not leave stale translations behind.
+        guard isTranslationSessionActive else {
+            startTranslationSession()
+            return
+        }
+        await captureSelectedWindow(automatically: true)
     }
 
     private func captureSelectedWindow(automatically: Bool) async {
@@ -493,15 +514,13 @@ final class AppState: ObservableObject {
 
         status = .working
         translationInvalidatedByScroll = false
-        if automatically {
-            overlayController.hideTranslationsWhileMonitoringScroll()
-        } else {
+        if !automatically {
             cancelAutomaticCapture()
             overlayController.hide()
+            isOverlayVisible = false
         }
-        isOverlayVisible = false
         message = automatically
-            ? "Page settled. Capturing the new viewport…"
+            ? "Checking the current viewport…"
             : "Capturing \(selectedWindowDescription)…"
 
         do {
@@ -556,6 +575,10 @@ final class AppState: ObservableObject {
                 message =
                     "Viewport barely changed. Reused the current translations."
                 return
+            }
+            if automatically {
+                overlayController.hideTranslationsWhileMonitoringScroll()
+                isOverlayVisible = false
             }
             let captureURL = try saveDebugCapture(imageForOCR)
             let captureData = try Data(contentsOf: captureURL)
@@ -721,8 +744,12 @@ final class AppState: ObservableObject {
             isTranslationSessionActive,
             let selectedWindow,
             let application = selectedWindow.owningApplication,
-            NSWorkspace.shared.frontmostApplication?.processIdentifier
-                == application.processID,
+            let frontmostApplication = NSWorkspace.shared.frontmostApplication,
+            (
+                frontmostApplication.processIdentifier == application.processID
+                    || frontmostApplication.bundleIdentifier
+                        == application.bundleIdentifier
+            ),
             isSelectedWindowAvailable()
         else {
             return false
@@ -812,23 +839,80 @@ final class AppState: ObservableObject {
         windowTrackingTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
+                let info = Self.windowInfo(for: selectedWindowID)
+                if isTranslationSessionActive {
+                    self.maybeHandlePageChange(title: info?.title)
+                }
+
                 let isFrontmost = self.isSelectedApplicationFrontmost()
                 if !isFrontmost {
                     if self.isOverlayVisible && !self.overlayHiddenForAppSwitch {
                         self.overlayController.temporarilyHide()
                         self.overlayHiddenForAppSwitch = true
                     }
-                } else if let frame = Self.windowFrame(for: selectedWindowID) {
-                    self.overlayController.updateFrame(frame)
+                } else if let info {
+                    self.overlayController.updateFrame(info.frame)
                     if self.isOverlayVisible && self.overlayHiddenForAppSwitch {
-                        self.overlayController.show(over: frame)
+                        self.overlayController.show(over: info.frame)
                         self.overlayHiddenForAppSwitch = false
                     }
+                    self.pollViewportIfNeeded()
                 }
 
                 try? await Task.sleep(for: .milliseconds(100))
             }
         }
+    }
+
+    /// Browser content can change without a scroll event or title change
+    /// (including some tab switches and client-side navigation). Periodically
+    /// fingerprinting the selected viewport gives every kind of page change a
+    /// single reliable detection path. OCR only runs when pixels differ.
+    private func pollViewportIfNeeded() {
+        guard
+            isTranslationSessionActive,
+            status == .idle,
+            Date().timeIntervalSince(lastViewportCheckAt) >= 1.0
+        else {
+            return
+        }
+        if let lastScrollActivityAt,
+           Date().timeIntervalSince(lastScrollActivityAt) < 0.5
+        {
+            return
+        }
+
+        lastViewportCheckAt = Date()
+        Task { await captureSelectedWindow(automatically: true) }
+    }
+
+    /// Detect when the browser navigates to another tab or page while the
+    /// translation session is active. Browsers update the window title to
+    /// reflect the active tab, so a title change is a reliable, cheap signal
+    /// that the previously translated page is no longer on screen.
+    private func maybeHandlePageChange(title: String?) {
+        let newTitle = title?.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ) ?? ""
+        defer { lastWindowTitle = newTitle }
+        guard
+            !newTitle.isEmpty,
+            !lastWindowTitle.isEmpty,
+            newTitle != lastWindowTitle,
+            status != .working
+        else {
+            return
+        }
+
+        // Discard the stale overlay immediately so it does not linger over the
+        // newly selected tab, then translate the new viewport after it settles.
+        recognizedTexts = []
+        translations = []
+        isOverlayVisible = false
+        overlayController.hideTranslationsWhileMonitoringScroll()
+        message = "Browser page changed. Translating the new viewport…"
+        lastScrollActivityAt = Date()
+        scheduleAutomaticCapture()
     }
 
     private func isSelectedApplicationFrontmost() -> Bool {
@@ -917,9 +1001,9 @@ final class AppState: ObservableObject {
         }
     }
 
-    nonisolated private static func windowFrame(
+    nonisolated private static func windowInfo(
         for windowID: CGWindowID
-    ) -> CGRect? {
+    ) -> (frame: CGRect, title: String?)? {
         guard
             let windowInfo = CGWindowListCopyWindowInfo(
                 [.optionIncludingWindow, .excludeDesktopElements],
@@ -929,14 +1013,22 @@ final class AppState: ObservableObject {
             (entry[kCGWindowIsOnscreen as String] as? Bool) == true,
             let boundsDictionary = entry[
                 kCGWindowBounds as String
-            ] as? NSDictionary
+            ] as? NSDictionary,
+            let frame = CGRect(
+                dictionaryRepresentation: boundsDictionary as CFDictionary
+            )
         else {
             return nil
         }
 
-        return CGRect(
-            dictionaryRepresentation: boundsDictionary as CFDictionary
-        )
+        let title = entry[kCGWindowName as String] as? String
+        return (frame, title)
+    }
+
+    nonisolated private static func windowFrame(
+        for windowID: CGWindowID
+    ) -> CGRect? {
+        windowInfo(for: windowID)?.frame
     }
 
     private func saveDebugCapture(_ image: CGImage) throws -> URL {
@@ -1019,6 +1111,89 @@ final class AppState: ObservableObject {
             $0 + abs(Int($1.0) - Int($1.1))
         }
         return Double(totalDifference) / Double(left.count)
+    }
+
+    /// Begins periodic sampling of app, sidecar, and Ollama resource usage so
+    /// the menu bar can surface CPU, memory, and battery health.
+    private func startPerformanceTimer() {
+        performanceTimer?.invalidate()
+        let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshPerformance()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        performanceTimer = timer
+        refreshPerformance()
+    }
+
+    /// Samples resource usage for the app, the launched Python sidecar, and the
+    /// Ollama model server, and publishes the result to the menu bar.
+    private func refreshPerformance() {
+        let appPID = ProcessInfo.processInfo.processIdentifier
+        let sidecarPID = sidecarClient.runningProcessPID
+
+        let appMemory = PerformanceMonitor.taskSample(pid: appPID)
+            .map { PerformanceMonitor.memoryMB($0.residentBytes) } ?? 0
+        let sidecarMemory = sidecarPID
+            .flatMap { PerformanceMonitor.taskSample(pid: $0) }
+            .map { PerformanceMonitor.memoryMB($0.residentBytes) } ?? 0
+        let ollama = PerformanceMonitor.ollamaMemory()
+        let system = PerformanceMonitor.systemMemory()
+        let battery = PerformanceMonitor.battery()
+
+        resourceSnapshot = ResourceSnapshot(
+            appMemoryMB: appMemory,
+            sidecarMemoryMB: sidecarMemory,
+            ollamaMemoryMB: ollama.memoryMB,
+            systemUsedGB: system.usedGB,
+            systemTotalGB: system.totalGB,
+            batteryPercent: battery.percent,
+            isCharging: battery.isCharging,
+            appCPUPercent: cpuPercent(pid: appPID),
+            sidecarCPUPercent: sidecarPID.map { cpuPercent(pid: $0) } ?? 0,
+            ollamaCPUPercent: ollamaCPUPercent()
+        )
+    }
+
+    /// Best-effort CPU percentage from per-process CPU-time deltas. The first
+    /// sample for a PID returns 0 until a second sample is available.
+    private func cpuPercent(pid: Int32?) -> Double {
+        guard
+            let pid,
+            let current = PerformanceMonitor.taskSample(pid: pid)
+        else {
+            return 0
+        }
+
+        let now = Date()
+        if let previous = lastTaskSamples[pid] {
+            guard current.cpuTotal >= previous.sample.cpuTotal else {
+                lastTaskSamples[pid] = (current, now)
+                return 0
+            }
+            let deltaNanoseconds = Double(
+                current.cpuTotal - previous.sample.cpuTotal
+            )
+            let elapsed = now.timeIntervalSince(previous.date)
+            lastTaskSamples[pid] = (current, now)
+            guard elapsed > 0 else { return 0 }
+            let cpuSeconds = deltaNanoseconds / 1_000_000_000
+            return min(100, max(0, cpuSeconds / elapsed * 100))
+        }
+
+        lastTaskSamples[pid] = (current, now)
+        return 0
+    }
+
+    private func ollamaCPUPercent() -> Double {
+        var total = 0.0
+        for name in ResourceSnapshot.ollamaProcessNames {
+            for pid in PerformanceMonitor.pids(named: name) {
+                total += cpuPercent(pid: pid)
+            }
+        }
+        return total
     }
 
     private func present(error: Error, action: String) {

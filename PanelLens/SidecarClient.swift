@@ -67,6 +67,11 @@ final class SidecarClient {
     var onStateChange: ((SidecarState, String) -> Void)?
     var onResponse: ((SidecarResponse) -> Void)?
 
+    /// The process identifier of the running Python sidecar, if any. Used by
+    /// the performance monitor to report how much CPU and memory OCR/translation
+    /// consume.
+    var runningProcessPID: Int32? { process?.processIdentifier }
+
     private var process: Process?
     private var inputHandle: FileHandle?
     private var outputBuffer = Data()
