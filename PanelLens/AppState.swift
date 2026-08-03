@@ -832,11 +832,21 @@ final class AppState: ObservableObject {
     }
 
     private func isSelectedApplicationFrontmost() -> Bool {
-        guard let processID = selectedWindow?.owningApplication?.processID else {
+        guard
+            let selectedApplication = selectedWindow?.owningApplication,
+            let frontmostApplication = NSWorkspace.shared.frontmostApplication
+        else {
             return false
         }
-        return NSWorkspace.shared.frontmostApplication?.processIdentifier
-            == processID
+
+        if frontmostApplication.processIdentifier == selectedApplication.processID {
+            return true
+        }
+
+        // Opening PanelLens from its menu-bar item can temporarily make this
+        // process frontmost while the selected browser remains underneath it.
+        // That is not an app switch and must not dismiss a freshly shown overlay.
+        return frontmostApplication.bundleIdentifier == Bundle.main.bundleIdentifier
     }
 
     private func showTranslationOverlay(for regions: [SidecarRegion]) {
