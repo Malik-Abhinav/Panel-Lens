@@ -22,6 +22,7 @@ from bubble_filter import filter_dialogue_regions
 from ocr_pipeline import recognize_korean
 from translation_pipeline import (
     TranslationError,
+    translation_runtime_status,
     translate_korean_regions,
     warm_translation_model,
 )
@@ -81,6 +82,7 @@ def handle(
     ocr_handler: Any = recognize_korean,
     bubble_handler: Any = filter_dialogue_regions,
     translation_handler: Any = translate_korean_regions,
+    runtime_handler: Any = translation_runtime_status,
 ) -> dict[str, Any]:
     request_id = message.get("request_id")
     message_type = message.get("type")
@@ -91,6 +93,7 @@ def handle(
             "request_id": request_id,
             "status": "ok",
             "type": "pong",
+            "runtime": runtime_handler(),
         }
 
     if message_type == "translate":

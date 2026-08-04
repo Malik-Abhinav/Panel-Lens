@@ -27,6 +27,10 @@ The private roadmap is kept outside Git. See
   first viewport immediately
 - Session requests reject stale responses after window, area, or session
   changes and recover after sidecar restarts
+- Startup health checks distinguish a ready local runtime from an offline
+  Ollama server or missing translation model and provide a retry action
+- Developer performance diagnostics are available from Settings and remain
+  hidden and inactive by default
 - Automatic scrolling is scoped to the selected, visible browser window
 - English translations render in a click-through overlay positioned over their
   detected dialogue and narration regions

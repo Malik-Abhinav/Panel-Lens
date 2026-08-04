@@ -13,6 +13,45 @@ from translation_pipeline import _request_translations
 from translation_pipeline import _romanize_korean_name
 from translation_pipeline import _translation_problems
 from translation_pipeline import translate_korean_regions
+from translation_pipeline import translation_runtime_status
+
+
+class _RuntimeResponse:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return json.dumps(self.payload).encode("utf-8")
+
+
+def test_runtime_status_reports_installed_model() -> None:
+    response = _RuntimeResponse({"models": [{"name": "hy-mt2:7b"}]})
+    with patch(
+        "translation_pipeline.urllib.request.urlopen",
+        return_value=response,
+    ):
+        result = translation_runtime_status()
+
+    assert result["ready"] is True
+    assert result["code"] == "ready"
+
+
+def test_runtime_status_reports_missing_model() -> None:
+    response = _RuntimeResponse({"models": [{"name": "another:7b"}]})
+    with patch(
+        "translation_pipeline.urllib.request.urlopen",
+        return_value=response,
+    ):
+        result = translation_runtime_status()
+
+    assert result["ready"] is False
+    assert result["code"] == "model_missing"
 
 
 def test_attach_translations_preserves_ocr_geometry() -> None:
