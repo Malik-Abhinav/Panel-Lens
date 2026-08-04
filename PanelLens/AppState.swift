@@ -47,6 +47,10 @@ final class AppState: ObservableObject {
     @Published private(set) var isTranslationSessionActive = false
     @Published private(set) var hasScreenCapturePermission =
         CGPreflightScreenCaptureAccess()
+    @Published private(set) var runtimeCode = "checking"
+    @Published private(set) var runtimeModel = "hy-mt2:7b"
+    @Published private(set) var isInstallingModel = false
+    @Published private(set) var modelInstallationMessage = ""
 
     private var selectedWindow: SCWindow?
     private let overlayController = OverlayController()
@@ -70,6 +74,7 @@ final class AppState: ObservableObject {
     private var lastViewportCheckAt = Date.distantPast
     private var performanceTimer: Timer?
     private var lastTaskSamples: [Int32: (sample: PerformanceMonitor.TaskSample, date: Date)] = [:]
+    private var launchedOllamaProcess: Process?
 
     private let automaticTranslationDelay = Duration.milliseconds(500)
     private let similarCaptureDifference = 3.0
@@ -92,6 +97,10 @@ final class AppState: ObservableObject {
         }
         sidecarClient.onStateChange = { [weak self] state, message in
             self?.handleSidecarStateChange(state, message: message)
+        }
+        sidecarClient.onRuntimeChange = { [weak self] runtime in
+            self?.runtimeCode = runtime.code
+            self?.runtimeModel = runtime.model
         }
         sidecarClient.onResponse = { [weak self] response in
             guard let self else { return }
@@ -208,6 +217,138 @@ final class AppState: ObservableObject {
     func checkLocalRuntime() {
         sidecarMessage = "Checking local OCR and translation runtime…"
         sidecarClient.checkRuntime()
+    }
+
+    var isOllamaInstalled: Bool {
+        let paths = [
+            "/Applications/Ollama.app",
+            "/opt/homebrew/bin/ollama",
+            "/usr/local/bin/ollama",
+        ]
+        return paths.contains {
+            FileManager.default.fileExists(atPath: $0)
+        }
+    }
+
+    var isSetupReady: Bool {
+        hasScreenCapturePermission && sidecarState == .ready
+    }
+
+    func openOllamaDownload() {
+        guard let url = URL(string: "https://ollama.com/download/mac") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    func openOllama() {
+        let applicationURL = URL(fileURLWithPath: "/Applications/Ollama.app")
+        guard FileManager.default.fileExists(atPath: applicationURL.path) else {
+            startOllamaCLI()
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        NSWorkspace.shared.openApplication(
+            at: applicationURL,
+            configuration: configuration
+        ) { [weak self] _, error in
+            Task { @MainActor in
+                if let error {
+                    self?.status = .error
+                    self?.message = "Could not open Ollama: \(error.localizedDescription)"
+                } else {
+                    try? await Task.sleep(for: .seconds(2))
+                    self?.checkLocalRuntime()
+                }
+            }
+        }
+    }
+
+    private func startOllamaCLI() {
+        let candidates = [
+            "/opt/homebrew/bin/ollama",
+            "/usr/local/bin/ollama",
+        ]
+        guard let path = candidates.first(where: {
+            FileManager.default.isExecutableFile(atPath: $0)
+        }) else {
+            status = .error
+            message = "Ollama is installed but its executable could not be found."
+            return
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = ["serve"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            launchedOllamaProcess = process
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                checkLocalRuntime()
+            }
+        } catch {
+            status = .error
+            message = "Could not start Ollama: \(error.localizedDescription)"
+        }
+    }
+
+    func installTranslationModel() {
+        guard !isInstallingModel else { return }
+        isInstallingModel = true
+        modelInstallationMessage =
+            "Downloading Hy-MT2 7B. This is several gigabytes and may take a while…"
+
+        Task {
+            do {
+                let source = "hf.co/tencent/Hy-MT2-7B-GGUF:Q4_K_M"
+                try await postOllamaJSON(
+                    path: "/api/pull",
+                    payload: ["model": source, "stream": false],
+                    timeout: 3_600
+                )
+                modelInstallationMessage = "Preparing the PanelLens model…"
+                try await postOllamaJSON(
+                    path: "/api/copy",
+                    payload: [
+                        "source": source,
+                        "destination": "hy-mt2:7b",
+                    ],
+                    timeout: 120
+                )
+                modelInstallationMessage = "Hy-MT2 7B is installed."
+                isInstallingModel = false
+                checkLocalRuntime()
+            } catch {
+                isInstallingModel = false
+                modelInstallationMessage =
+                    "Model installation failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func postOllamaJSON(
+        path: String,
+        payload: [String: Any],
+        timeout: TimeInterval
+    ) async throws {
+        guard let url = URL(string: "http://127.0.0.1:11434\(path)") else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = timeout
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard
+            let httpResponse = response as? HTTPURLResponse,
+            (200..<300).contains(httpResponse.statusCode)
+        else {
+            throw URLError(.badServerResponse)
+        }
     }
 
     func refreshWindows() async {

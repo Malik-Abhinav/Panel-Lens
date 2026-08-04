@@ -7,6 +7,7 @@ struct MenuBarContent: View {
     @Environment(\.openWindow) private var openWindow
     @AppStorage("showPerformanceDiagnostics")
     private var showPerformanceDiagnostics = false
+    @AppStorage("hasCompletedSetup") private var hasCompletedSetup = false
 
     var body: some View {
         Text(appState.selectedWindowDescription)
@@ -100,6 +101,10 @@ struct MenuBarContent: View {
             }
         }
 
+        Button("Setup Assistant…") {
+            openWindow(id: "setup")
+        }
+
         Button(
             appState.hasReadingArea
                 ? "Change Reading Area…"
@@ -159,6 +164,11 @@ struct MenuBarContent: View {
             NSApplication.shared.terminate(nil)
         }
         .keyboardShortcut("q")
+        .onAppear {
+            if !hasCompletedSetup {
+                openWindow(id: "setup")
+            }
+        }
     }
 
     private var performanceSummary: some View {

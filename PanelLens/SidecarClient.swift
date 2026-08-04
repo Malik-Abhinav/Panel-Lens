@@ -75,6 +75,7 @@ struct SidecarError: Decodable {
 final class SidecarClient {
     var onStateChange: ((SidecarState, String) -> Void)?
     var onResponse: ((SidecarResponse) -> Void)?
+    var onRuntimeChange: ((SidecarRuntime) -> Void)?
 
     /// The process identifier of the running Python sidecar, if any. Used by
     /// the performance monitor to report how much CPU and memory OCR/translation
@@ -278,6 +279,9 @@ final class SidecarClient {
     private func handle(_ response: SidecarResponse) {
         if response.status == "ok", response.type == "pong" {
             restartAttempts = 0
+            if let runtime = response.runtime {
+                onRuntimeChange?(runtime)
+            }
             if let runtime = response.runtime, !runtime.ready {
                 publish(.error, runtime.message)
             } else {
