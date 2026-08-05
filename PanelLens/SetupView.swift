@@ -83,6 +83,9 @@ struct SetupView: View {
     }
 
     private var ollamaDetail: String {
+        if !appState.ollamaLaunchMessage.isEmpty {
+            return appState.ollamaLaunchMessage
+        }
         if !appState.isOllamaInstalled {
             return "Not installed"
         }

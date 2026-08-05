@@ -51,6 +51,7 @@ final class AppState: ObservableObject {
     @Published private(set) var runtimeModel = "hy-mt2:7b"
     @Published private(set) var isInstallingModel = false
     @Published private(set) var modelInstallationMessage = ""
+    @Published private(set) var ollamaLaunchMessage = ""
 
     private var selectedWindow: SCWindow?
     private let overlayController = OverlayController()
@@ -257,8 +258,8 @@ final class AppState: ObservableObject {
                     self?.status = .error
                     self?.message = "Could not open Ollama: \(error.localizedDescription)"
                 } else {
-                    try? await Task.sleep(for: .seconds(2))
-                    self?.checkLocalRuntime()
+                    self?.ollamaLaunchMessage = "Starting Ollama…"
+                    await self?.waitForOllamaServer()
                 }
             }
         }
@@ -278,20 +279,59 @@ final class AppState: ObservableObject {
         }
 
         let process = Process()
+        let errorPipe = Pipe()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = ["serve"]
         process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        process.standardError = errorPipe
+        ollamaLaunchMessage = "Starting Ollama…"
+        process.terminationHandler = { [weak self] process in
+            let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let detail = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            Task { @MainActor in
+                guard process.terminationStatus != 0 else { return }
+                self?.ollamaLaunchMessage = detail?.isEmpty == false
+                    ? "Ollama stopped: \(detail!)"
+                    : "Ollama stopped with status \(process.terminationStatus)."
+            }
+        }
         do {
             try process.run()
             launchedOllamaProcess = process
             Task {
-                try? await Task.sleep(for: .seconds(2))
-                checkLocalRuntime()
+                await waitForOllamaServer()
             }
         } catch {
             status = .error
             message = "Could not start Ollama: \(error.localizedDescription)"
+        }
+    }
+
+    private func waitForOllamaServer() async {
+        for _ in 0..<15 {
+            if await isOllamaServerReachable() {
+                ollamaLaunchMessage = "Ollama is running."
+                checkLocalRuntime()
+                return
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
+        ollamaLaunchMessage =
+            "Ollama did not start within 15 seconds. Try opening it again."
+    }
+
+    private func isOllamaServerReachable() async -> Bool {
+        guard let url = URL(string: "http://127.0.0.1:11434/api/tags") else {
+            return false
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 1
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            return (response as? HTTPURLResponse)?.statusCode == 200
+        } catch {
+            return false
         }
     }
 
