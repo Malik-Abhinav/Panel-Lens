@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "PanelLens Prefetch Spike",
+  "version": "0.1.0",
+  "description": "Tests local translation and two-image look-ahead on ordinary comic readers.",
+  "permissions": ["activeTab"],
+  "host_permissions": ["http://127.0.0.1:8765/*", "http://*/*", "https://*/*"],
+  "background": {"service_worker": "service-worker.js"},
+  "action": {"default_popup": "popup.html", "default_title": "PanelLens"},
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content-script.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

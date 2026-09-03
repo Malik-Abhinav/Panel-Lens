@@ -103,3 +103,19 @@ filtered even when they appear over a white page.
 
 If Ollama is offline or the model is missing, the sidecar returns a structured
 error for the macOS app to display.
+
+## Browser-prefetch feasibility server
+
+The time-boxed Chromium spike includes `http_server.py`, a prototype adapter
+around the same `main.handle` OCR/filter/translation path. Start it with:
+
+```sh
+.venv/bin/python http_server.py
+```
+
+It binds only to `127.0.0.1:8765` and exposes `/v1/health`,
+`/v1/images/translate`, `/v1/images/translate-batch`, and
+`/v1/sessions/clear`. A batch contains at most three ordered images: OCR and
+filtering remain per image, while retained regions share one Hy-MT2 generation.
+It is intentionally not a production pairing or authentication system. See
+`extension/README.md` for the manual feasibility test.

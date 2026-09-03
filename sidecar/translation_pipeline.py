@@ -24,7 +24,7 @@ TRANSLATION_CACHE_SIZE = max(
 )
 TRANSLATION_CONTEXT_SIZE = 20
 TRANSLATION_CONTEXT_CHARACTER_BUDGET = 6000
-TRANSLATION_PROMPT_VERSION = "2026-07-31.rolling-context-v1"
+TRANSLATION_PROMPT_VERSION = "2026-08-08.series-glossary-v3"
 _translation_cache: OrderedDict[
     tuple[str, str, str, str, tuple[tuple[str, str], ...], tuple[str, ...]],
     list[dict[str, Any]],
@@ -386,11 +386,22 @@ def _bounded_context(
 def _format_previous_context(context: list[dict[str, str]]) -> str:
     if not context:
         return "(none)"
-    return "\n".join(
-        f"[previous {index + 1}] Korean: {item['korean']}\n"
-        f"[previous {index + 1}] English: {item['english']}"
-        for index, item in enumerate(context)
-    )
+    lines = []
+    previous_index = 0
+    for item in context:
+        if item["korean"].casefold().startswith("[glossary] "):
+            korean = item["korean"][len("[glossary] ") :]
+            lines.append(
+                f"[series glossary] Korean: {korean}\n"
+                f"[series glossary] Required English: {item['english']}"
+            )
+            continue
+        previous_index += 1
+        lines.append(
+            f"[previous {previous_index}] Korean: {item['korean']}\n"
+            f"[previous {previous_index}] English: {item['english']}"
+        )
+    return "\n".join(lines)
 
 
 def _active_adapter(
@@ -454,7 +465,13 @@ def _build_hymt_page_prompt(
         "per block. Preserve names, quantities, negation, pronouns, sentence "
         "fragments, politeness, slang strength, and tone. Translate the "
         "intended meaning of dialect rather than transliterating dialect "
-        "words. Do not invent or omit information. Output only the numbered "
+        "words. Korean often omits subjects and gender. Never guess he, she, "
+        "or a speaker identity unless the current text or established context "
+        "supports it; prefer natural gender-neutral wording. Reuse an "
+        "established romanized name and every series-glossary spelling "
+        "exactly. Parenthetical gender in the glossary is metadata only; do "
+        "not output the parenthetical text. Do not invent or omit "
+        "information. Output only the numbered "
         "English translations without explanations.\n\n"
         "Current blocks to translate:\n"
         f"{blocks}"
@@ -605,6 +622,8 @@ Requirements:
 - Romanize Korean personal names consistently. Do not leave Korean, Chinese, or
   other CJK characters in English output. If an official spelling is unknown,
   use standard romanization.
+- Reuse every series-glossary spelling exactly. Parenthetical gender in a
+  glossary entry is metadata only and must not appear in translated dialogue.
 - A block containing only a name with vocative -아/-야 only calls that person;
   do not expand it into surrounding dialogue.
 - OCR may contain spacing or syllable errors. Correct only when grammar and page

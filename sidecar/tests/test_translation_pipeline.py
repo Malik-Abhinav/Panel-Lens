@@ -146,6 +146,8 @@ def test_hymt_page_prompt_and_parser_preserve_alignment() -> None:
     assert "[2] 두 번째" in prompt
     assert "The series is Example Series." in prompt
     assert "intended meaning of dialect" in prompt
+    assert "Never guess he, she" in prompt
+    assert "every series-glossary spelling exactly" in prompt
 
     parsed = _parse_numbered_translations(
         "[1] First line\ncontinues here.\n[2] Second line",
@@ -179,6 +181,21 @@ def test_prompts_separate_previous_context_from_current_blocks() -> None:
         assert "곧 따라갈게." in prompt
         assert "reference only" in prompt.casefold()
         assert "never output" in prompt.casefold()
+
+
+def test_prompts_format_series_glossary_as_required_reference() -> None:
+    context = [
+        {"korean": "[glossary] 베리엘", "english": "Belial (male)"}
+    ]
+    regions = [{"original": "베리엘 님.", "region_type": "dialogue"}]
+
+    hymt_prompt = _build_hymt_page_prompt(regions, "", context)
+    json_prompt = _build_page_prompt(regions, "", context)
+
+    for prompt in (hymt_prompt, json_prompt):
+        assert "[series glossary] Korean: 베리엘" in prompt
+        assert "Required English: Belial (male)" in prompt
+        assert "metadata only" in prompt
 
 
 def test_context_is_validated_and_bounded_to_twenty_blocks() -> None:
