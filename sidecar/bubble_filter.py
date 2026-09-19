@@ -41,6 +41,11 @@ def filter_dialogue_regions(
             region["bbox"],
         )
         inverse_score = _inverse_bubble_score(image, region["bbox"])
+        colored_inverse_score = _colored_inverse_bubble_score(
+            image,
+            region["bbox"],
+        )
+        colored_box_score = _colored_box_score(image, region["bbox"])
         narration_score = _narration_score(region)
         decorative_colored_text = _is_decorative_colored_text(
             image,
@@ -52,7 +57,17 @@ def filter_dialogue_regions(
             translucent_score,
             narration_score,
         )
-        inverse_dialogue = _is_inverse_dialogue(region, inverse_score)
+        inverse_dialogue = _is_inverse_dialogue(image, region, inverse_score)
+        colored_inverse_dialogue = _is_colored_inverse_dialogue(
+            region,
+            colored_inverse_score,
+            narration_score,
+        )
+        colored_box_dialogue = _is_colored_box_dialogue(
+            region,
+            colored_box_score,
+            narration_score,
+        )
         if (
             decorative_colored_text
             or (
@@ -60,6 +75,8 @@ def filter_dialogue_regions(
                 and narration_score < MINIMUM_NARRATION_SCORE
                 and not translucent_dialogue
                 and not inverse_dialogue
+                and not colored_inverse_dialogue
+                and not colored_box_dialogue
             )
         ):
             continue
@@ -73,10 +90,21 @@ def filter_dialogue_regions(
             candidate["bubble_confidence"] = round(inverse_score, 4)
             candidate["region_type"] = "dialogue"
             candidate["bubble_style"] = "inverse"
+        elif colored_inverse_dialogue:
+            candidate["bubble_confidence"] = round(
+                colored_inverse_score,
+                4,
+            )
+            candidate["region_type"] = "dialogue"
+            candidate["bubble_style"] = "colored-inverse"
         elif translucent_dialogue:
             candidate["bubble_confidence"] = round(translucent_score, 4)
             candidate["region_type"] = "dialogue"
             candidate["bubble_style"] = "translucent"
+        elif colored_box_dialogue:
+            candidate["bubble_confidence"] = round(colored_box_score, 4)
+            candidate["region_type"] = "dialogue"
+            candidate["bubble_style"] = "colored"
         else:
             candidate["bubble_confidence"] = round(narration_score, 4)
             candidate["region_type"] = "narration"
@@ -178,7 +206,110 @@ def _inverse_bubble_score(image: np.ndarray, bbox: list[float]) -> float:
     return float(dark_share * 0.65 + darkness * 0.35)
 
 
+def _colored_box_score(image: np.ndarray, bbox: list[float]) -> float:
+    """Score dark lettering surrounded by a uniform saturated color box."""
+    crop = _expanded_crop(image, bbox)
+    if crop.size == 0:
+        return 0.0
+
+    luminance = (
+        crop[:, :, 0] * 0.2126
+        + crop[:, :, 1] * 0.7152
+        + crop[:, :, 2] * 0.0722
+    )
+    chroma = crop.max(axis=2) - crop.min(axis=2)
+    background = luminance >= 75
+    if background.sum() < crop.shape[0] * crop.shape[1] * 0.55:
+        return 0.0
+
+    background_pixels = crop[background]
+    background_chroma = chroma[background]
+    saturation = np.clip(
+        (np.median(background_chroma) - 30.0) / 90.0,
+        0.0,
+        1.0,
+    )
+    uniformity = np.clip(
+        1.0 - np.mean(np.std(background_pixels, axis=0)) / 38.0,
+        0.0,
+        1.0,
+    )
+    dark_ink_share = float((luminance < 75).mean())
+    ink_presence = np.clip(dark_ink_share / 0.08, 0.0, 1.0)
+    return float(saturation * 0.45 + uniformity * 0.35 + ink_presence * 0.20)
+
+
+def _colored_inverse_bubble_score(
+    image: np.ndarray,
+    bbox: list[float],
+) -> float:
+    """Score saturated colored lettering inside a predominantly dark box."""
+    crop = _expanded_crop(image, bbox)
+    if crop.size == 0:
+        return 0.0
+
+    luminance = (
+        crop[:, :, 0] * 0.2126
+        + crop[:, :, 1] * 0.7152
+        + crop[:, :, 2] * 0.0722
+    )
+    chroma = crop.max(axis=2) - crop.min(axis=2)
+    maximum_channel = crop.max(axis=2)
+    dark_background_share = float((luminance <= 105).mean())
+    colored_ink_share = float(
+        ((chroma >= 65) & (maximum_channel >= 130)).mean()
+    )
+    if colored_ink_share > 0.28:
+        return 0.0
+    colored_ink_presence = np.clip(
+        colored_ink_share / 0.055,
+        0.0,
+        1.0,
+    )
+    return float(
+        np.clip(dark_background_share / 0.72, 0.0, 1.0) * 0.62
+        + colored_ink_presence * 0.38
+    )
+
+
+def _is_colored_inverse_dialogue(
+    region: dict[str, Any],
+    colored_inverse_score: float,
+    narration_score: float,
+) -> bool:
+    if colored_inverse_score < 0.68 or float(region.get("confidence", 0.0)) < 0.80:
+        return False
+
+    text = re.sub(r"\s+", " ", str(region.get("original", "")).strip())
+    hangul_count = len(re.findall(r"[가-힣]", text))
+    line_count = int(region.get("line_count", 1))
+    return hangul_count >= 4 and (
+        line_count >= 2
+        or narration_score >= 0.30
+        or bool(re.search(r"[,，.!?…~]", text))
+    )
+
+
+def _is_colored_box_dialogue(
+    region: dict[str, Any],
+    colored_box_score: float,
+    narration_score: float,
+) -> bool:
+    if colored_box_score < 0.62 or float(region.get("confidence", 0.0)) < 0.82:
+        return False
+
+    text = re.sub(r"\s+", " ", str(region.get("original", "")).strip())
+    hangul_count = len(re.findall(r"[가-힣]", text))
+    line_count = int(region.get("line_count", 1))
+    return hangul_count >= 4 and (
+        line_count >= 2
+        or narration_score >= 0.30
+        or bool(re.search(r"[,，.!?…~]$", text))
+    )
+
+
 def _is_inverse_dialogue(
+    image: np.ndarray,
     region: dict[str, Any],
     inverse_score: float,
 ) -> bool:
@@ -189,10 +320,30 @@ def _is_inverse_dialogue(
     text = re.sub(r"\s+", " ", str(region.get("original", "")).strip())
     hangul_count = len(re.findall(r"[가-힣]", text))
     line_count = int(region.get("line_count", 1))
+    crop = _region_crop(image, region["bbox"])
+    if crop.size == 0:
+        return False
+    luminance = (
+        crop[:, :, 0] * 0.2126
+        + crop[:, :, 1] * 0.7152
+        + crop[:, :, 2] * 0.0722
+    )
+    if float((luminance >= 185).mean()) < 0.025:
+        return False
     # Multi-line layout is a strong bubble signal. Keeping this intentionally
     # strict avoids reclassifying prose, page labels, and stylized SFX merely
     # because they happen to sit over dark artwork.
     return hangul_count >= 5 and line_count >= 2
+
+
+def _region_crop(image: np.ndarray, bbox: list[float]) -> np.ndarray:
+    image_height, image_width = image.shape[:2]
+    left, top, width, height = bbox
+    x1 = max(0, round(left))
+    y1 = max(0, round(top))
+    x2 = min(image_width, round(left + width))
+    y2 = min(image_height, round(top + height))
+    return image[y1:y2, x1:x2].astype(np.int16)
 
 
 def _is_translucent_dialogue(
@@ -237,13 +388,7 @@ def _is_decorative_colored_text(
 
 
 def _ink_chroma(image: np.ndarray, bbox: list[float]) -> float:
-    image_height, image_width = image.shape[:2]
-    left, top, width, height = bbox
-    x1 = max(0, round(left))
-    y1 = max(0, round(top))
-    x2 = min(image_width, round(left + width))
-    y2 = min(image_height, round(top + height))
-    crop = image[y1:y2, x1:x2].astype(np.int16)
+    crop = _region_crop(image, bbox)
     if crop.size == 0:
         return 0.0
 

@@ -1,5 +1,7 @@
 import json
 from unittest.mock import patch
+import pytest
+import translation_pipeline as pipeline
 
 from translation_pipeline import _attach_translations
 from translation_pipeline import _active_adapter
@@ -7,6 +9,7 @@ from translation_pipeline import _bounded_context
 from translation_pipeline import _build_hymt_page_prompt
 from translation_pipeline import _build_page_prompt
 from translation_pipeline import _normalize_translation
+from translation_pipeline import ollama_metrics_from_envelope
 from translation_pipeline import _parse_numbered_translations
 from translation_pipeline import _request_hymt_page
 from translation_pipeline import _request_translations
@@ -14,6 +17,18 @@ from translation_pipeline import _romanize_korean_name
 from translation_pipeline import _translation_problems
 from translation_pipeline import translate_korean_regions
 from translation_pipeline import translation_runtime_status
+
+
+@pytest.fixture(autouse=True)
+def selected_test_model(monkeypatch):
+    monkeypatch.setattr(pipeline, "OLLAMA_MODEL", "hy-mt2:7b")
+
+
+def test_no_model_selected_never_reports_ready(monkeypatch) -> None:
+    monkeypatch.setattr(pipeline, "OLLAMA_MODEL", "")
+    assert translation_runtime_status()["code"] == "model_unselected"
+    with pytest.raises(pipeline.TranslationError, match="Choose an installed Ollama model"):
+        translate_korean_regions([{"original": "안녕"}])
 
 
 class _RuntimeResponse:
@@ -125,6 +140,31 @@ def test_ollama_request_keeps_model_warm_and_limits_output() -> None:
     assert result[0]["translation"] == "Hello"
 
 
+def test_ollama_metric_parsing_converts_nanoseconds_and_tokens_per_second() -> None:
+    metrics = ollama_metrics_from_envelope(
+        {
+            "load_duration": 125_000_000,
+            "prompt_eval_duration": 500_000_000,
+            "eval_duration": 2_000_000_000,
+            "total_duration": 2_750_000_000,
+            "prompt_eval_count": 100,
+            "eval_count": 20,
+            "message": {"content": "sensitive and ignored"},
+        }
+    )
+
+    assert metrics == {
+        "ollama_load_duration_ms": 125.0,
+        "ollama_prompt_eval_duration_ms": 500.0,
+        "ollama_generation_duration_ms": 2000.0,
+        "ollama_total_duration_ms": 2750.0,
+        "ollama_prompt_token_count": 100,
+        "ollama_generated_token_count": 20,
+        "ollama_tokens_per_second": 10.0,
+    }
+    assert "message" not in metrics
+
+
 def test_translation_adapter_is_replaceable_by_model_or_configuration() -> None:
     assert _active_adapter("hy-mt2:7b", "auto") == "hy-mt2"
     assert _active_adapter("qwen2.5:7b", "auto") == "panelens-json"
@@ -146,6 +186,8 @@ def test_hymt_page_prompt_and_parser_preserve_alignment() -> None:
     assert "[2] 두 번째" in prompt
     assert "The series is Example Series." in prompt
     assert "intended meaning of dialect" in prompt
+    assert "Never guess he, she" in prompt
+    assert "every series-glossary spelling exactly" in prompt
 
     parsed = _parse_numbered_translations(
         "[1] First line\ncontinues here.\n[2] Second line",
@@ -179,6 +221,21 @@ def test_prompts_separate_previous_context_from_current_blocks() -> None:
         assert "곧 따라갈게." in prompt
         assert "reference only" in prompt.casefold()
         assert "never output" in prompt.casefold()
+
+
+def test_prompts_format_series_glossary_as_required_reference() -> None:
+    context = [
+        {"korean": "[glossary] 베리엘", "english": "Belial (male)"}
+    ]
+    regions = [{"original": "베리엘 님.", "region_type": "dialogue"}]
+
+    hymt_prompt = _build_hymt_page_prompt(regions, "", context)
+    json_prompt = _build_page_prompt(regions, "", context)
+
+    for prompt in (hymt_prompt, json_prompt):
+        assert "[series glossary] Korean: 베리엘" in prompt
+        assert "Required English: Belial (male)" in prompt
+        assert "metadata only" in prompt
 
 
 def test_context_is_validated_and_bounded_to_twenty_blocks() -> None:

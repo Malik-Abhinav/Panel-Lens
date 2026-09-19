@@ -17,17 +17,22 @@ targets:
     platform: macOS
     sources:
       - path: PanelLens
+    postBuildScripts:
+      - name: Bundle standalone runtime and sidecar
+        script: /bin/sh "$SRCROOT/scripts/stage_app_resources.sh"
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.panellens.app
         PRODUCT_NAME: PanelLens
+        MARKETING_VERSION: 0.3.0
+        CURRENT_PROJECT_VERSION: 1
+        ARCHS: arm64
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_LSUIElement: true
         INFOPLIST_KEY_NSScreenCaptureUsageDescription: >-
           PanelLens captures the browser window you select so it can recognize
           and translate visible manhwa or manhua text locally.
-        CODE_SIGN_STYLE: Automatic
-        CODE_SIGN_IDENTITY: Apple Development
-        DEVELOPMENT_TEAM: DK4MKJ7QP9
     entitlements:
       path: PanelLens/PanelLens.entitlements

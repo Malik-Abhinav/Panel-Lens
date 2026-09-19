@@ -10,7 +10,8 @@ struct SettingsView: View {
             Section("Translation") {
                 LabeledContent("Source language", value: "Korean")
                 LabeledContent("Target language", value: "English")
-                LabeledContent("Local model", value: "hy-mt2:7b")
+                LabeledContent("Ollama model", value: appState.runtimeModel.isEmpty ? "None selected" : appState.runtimeModel)
+                Text("Choose models in Browser Setup & Models or the extension popup.").font(.callout)
             }
 
             Section("Diagnostics") {

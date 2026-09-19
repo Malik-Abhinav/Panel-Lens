@@ -1,36 +1,25 @@
 # PanelLens
 
-PanelLens is a native macOS app for translating Korean manhwa and Chinese manhua
-inside a selected browser window using a local OCR and translation pipeline.
+PanelLens puts English translations over Korean text in comic images. Read with the Chrome or Edge extension; the Mac companion runs OCR and sends recognized text to a translation model in your own Ollama installation. The extension and companion communicate over an authenticated `127.0.0.1` connection.
 
-The current focus is the Korean MVP:
+**Release status:** An Apple Silicon app and unpacked browser extension are being prepared. No public installer has been verified or published yet. The release contains no translation model or model download. You provide and choose an Ollama model on your Mac.
 
-> Select a browser window, press a shortcut, and display correctly positioned
-> English translations over visible Korean dialogue and narration.
+## Set up
 
-The private roadmap is kept outside Git. See
-[evaluation/README.md](evaluation/README.md) for the OCR evaluation workflow.
+1. Install [Ollama](https://ollama.com/download) and install or import a model you have the right to use. PanelLens accepts any model that appears in Ollama's installed model list. Translation quality varies by model.
+2. Install the PanelLens Mac app when its verified release is available and open **Browser Setup & Models**. Because the planned build is unsigned, macOS may require **System Settings → Privacy & Security → Open Anyway** after the first launch. Follow [Apple's instructions](https://support.apple.com/en-gb/102445) and check the published ZIP checksum before opening it.
+3. Start Ollama. In the PanelLens setup window, select an installed model or type its Ollama name, then click **Use Selected Model**. PanelLens never downloads a model automatically.
+4. Click **Show Extension Files**. In Chrome or Edge, open the Extensions page, enable Developer mode, click **Load unpacked**, and choose the shown folder.
+5. Click **Copy Connection Key** in the Mac app. Paste it into the extension popup and click **Connect**. Open a comic page and click **Start on this page**.
 
-## Current status
+You can change models in the Mac app or extension popup. Reading pauses during a change, and you can start the page again afterward. The extension reads ordinary image resources; for canvas, DRM, or inaccessible images, use **Screen Capture Fallback** in the Mac app. Only that fallback needs macOS Screen Recording permission.
 
-- Native menu-bar app builds and runs on macOS 14+
-- Browser window selection and ScreenCaptureKit screenshots work
-- Click-through overlay follows the selected browser as it moves and resizes
-- Korean and Chinese OCR evaluation dataset structure is prepared
-- Project-specific Python 3.12 environment is installed
-- Swift launches and monitors the Python sidecar using newline-delimited JSON
-- Korean OCR runs locally on the selected reader area
-- Contextual Korean-to-English translation uses local Ollama/Hy-MT2 7B
-- Translations refresh automatically after meaningful scrolling stops
-- Near-identical viewports reuse positioned results without repeating OCR
-- Reading sessions provide explicit start/pause controls and translate the
-  first viewport immediately
-- Session requests reject stale responses after window, area, or session
-  changes and recover after sidecar restarts
-- Startup health checks distinguish a ready local runtime from an offline
-  Ollama server or missing translation model and provide a retry action
-- Developer performance diagnostics are available from Settings and remain
-  hidden and inactive by default
-- Automatic scrolling is scoped to the selected, visible browser window
-- English translations render in a click-through overlay positioned over their
-  detected dialogue and narration regions
+Ollama can import a compatible local model file. See [Ollama's model import guide](https://docs.ollama.com/import) for the formats and steps it currently supports. Once the imported model appears in Ollama, select it in PanelLens. Directly selecting an arbitrary weights file in PanelLens is not supported.
+
+## Privacy and limits
+
+OCR runs in the Mac app. The extension sends readable image bytes to the authenticated local companion. The companion sends recognized text to the configured Ollama endpoint, which defaults to your Mac. If you change Ollama to a remote endpoint, that endpoint receives the text. PanelLens has no account or hosted translation service. Review translations against the original for important details.
+
+The current app target is Apple Silicon macOS 14 or later. Its bundled OCR engine needs no user-installed Python or pip. Ollama and your selected model are separate installations. The unpacked extension must be reloaded after an app update and does not update automatically.
+
+The app source is covered by [LICENSE](LICENSE). See [release preparation](distribution/README.md) and [extension details](extension/README.md).

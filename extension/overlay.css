@@ -1,0 +1,26 @@
+.panellens-layer {
+  position: absolute;
+  inset: 0 auto auto 0;
+  z-index: 2147483646;
+  pointer-events: none;
+  overflow: visible;
+  contain: layout style;
+}
+
+.panellens-card {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 7px;
+  overflow: hidden;
+  border: 1px solid rgb(35 35 35 / 18%);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 92%);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 20%);
+  color: #171717;
+  font: 600 clamp(11px, 1.4vw, 18px)/1.15 -apple-system, BlinkMacSystemFont, sans-serif;
+  text-align: center;
+  overflow-wrap: anywhere;
+}

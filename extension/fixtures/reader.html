@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>PanelLens synthetic reader fixture</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #1b1c20; color: white; font-family: system-ui, sans-serif; }
+      header { position: sticky; top: 0; z-index: 2; padding: 10px 16px; background: rgb(20 21 24 / 90%); }
+      button { margin-left: 8px; }
+      header img { width: 32px; height: 32px; vertical-align: middle; }
+      main { width: min(900px, 100%); margin: 0 auto; }
+      main > img { display: block; width: 100%; height: auto; }
+      .ad { width: 220px; height: 90px; margin: 24px auto; background: #555; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <img alt="small icon"><span> Deterministic vertical reader</span>
+      <button data-replay="normal">Normal</button>
+      <button data-replay="small">Small</button>
+      <button data-replay="rapid">Rapid</button>
+      <button data-replay="reverse">Reverse</button>
+      <button data-replay="slow">Slow</button>
+      <output id="replay-status">idle</output>
+    </header>
+    <main id="reader"></main>
+    <script>
+      const reader = document.querySelector("#reader");
+      const lines = ["안녕하세요!", "지금 어디예요?", "곧 도착할게요.", "정말 고마워요.", "다음에 또 만나요."];
+      for (let index = 0; index < 20; index += 1) {
+        if (index === 2) {
+          const ad = document.createElement("img");
+          ad.className = "ad";
+          ad.alt = "advertisement-sized exclusion";
+          reader.appendChild(ad);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = 900;
+        canvas.height = 1400;
+        const context = canvas.getContext("2d");
+        context.fillStyle = index % 2 ? "#8eb5c6" : "#d4a68a";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.fillStyle = "#33414c";
+        context.fillRect(0, 760, canvas.width, 640);
+        context.fillStyle = "white";
+        context.beginPath();
+        context.ellipse(450, 320, 300, 150, 0, 0, Math.PI * 2);
+        context.fill();
+        context.fillStyle = "#111";
+        context.textAlign = "center";
+        context.textBaseline = "middle";
+        context.font = "700 64px sans-serif";
+        context.fillText(lines[index % lines.length], 450, 320);
+        const image = new Image();
+        image.id = `panel-${index}`;
+        image.alt = `Synthetic comic panel ${index + 1}`;
+        image.loading = index > 1 ? "lazy" : "eager";
+        image.src = canvas.toDataURL("image/png");
+        reader.appendChild(image);
+      }
+
+      // Exercise dynamic insertion and source/currentSrc mutation without a full scan.
+      const dynamic = new Image();
+      dynamic.id = "panel-dynamic";
+      dynamic.alt = "Dynamically inserted comic panel";
+      dynamic.loading = "lazy";
+      dynamic.src = document.querySelector("#panel-19").src;
+      setTimeout(() => reader.appendChild(dynamic), 100);
+      setTimeout(() => { dynamic.srcset = `${dynamic.src} 900w`; dynamic.sizes = "100vw"; }, 200);
+
+      const scripts = {
+        normal: [0, 1, 2, 3],
+        small: [0, 0.5, 1, 1.5],
+        rapid: [0, 1, 4, 10, 16],
+        reverse: [0, 1, 2, 3, 2, 1],
+        slow: [0, 1, 2, 3]
+      };
+      const delays = { normal: 1000, small: 500, rapid: 100, reverse: 700, slow: 2000 };
+      const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+      window.runPanelLensReplay = async (name, delayOverride) => {
+        const status = document.querySelector("#replay-status");
+        const timings = [];
+        for (const position of scripts[name]) {
+          const started = performance.now();
+          scrollTo({ top: position * 1400, behavior: "instant" });
+          await new Promise(requestAnimationFrame);
+          timings.push(performance.now() - started);
+          await wait(delayOverride ?? delays[name]);
+        }
+        const result = { name, steps: scripts[name].length, maxFrameMs: Math.max(...timings), finalScrollY: scrollY };
+        status.value = JSON.stringify(result);
+        return result;
+      };
+      document.querySelectorAll("[data-replay]").forEach((button) => {
+        button.addEventListener("click", () => window.runPanelLensReplay(button.dataset.replay));
+      });
+    </script>
+  </body>
+</html>
