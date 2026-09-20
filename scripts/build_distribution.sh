@@ -34,5 +34,4 @@ if [ -n "${PANELLENS_NOTARY_PROFILE:-}" ]; then
   xcrun stapler staple "$app"
   /usr/bin/ditto -c -k --keepParent "$app" "$zip"
 fi
-/usr/bin/shasum -a 256 "$zip" \
-  > "$root/build/distribution/delivery/SHA256SUMS"
+(cd "$root/build/distribution/delivery" && /usr/bin/shasum -a 256 "$(basename "$zip")" > SHA256SUMS)
