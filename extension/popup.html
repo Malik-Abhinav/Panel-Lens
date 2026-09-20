@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>PanelLens</title>
+    <style>
+      body { width: 260px; margin: 0; padding: 16px; color: #171717; font: 13px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; }
+      h1 { margin: 0 0 10px; font-size: 16px; }
+      button { width: 100%; padding: 8px 10px; border: 0; border-radius: 7px; background: #3157d5; color: white; font: inherit; font-weight: 600; cursor: pointer; }
+      label { display: block; margin-top: 12px; font-weight: 600; }
+      select, input { box-sizing: border-box; width: 100%; margin-top: 5px; padding: 6px; }
+      textarea { box-sizing: border-box; width: 100%; min-height: 58px; margin-top: 5px; resize: vertical; }
+      small { display: block; margin-top: 3px; color: #777; }
+      #status { margin: 10px 0 0; color: #555; white-space: pre-line; }
+    </style>
+  </head>
+  <body>
+    <h1>PanelLens browser reader</h1>
+    <small id="extension-version"></small>
+    <label for="session-token">Connect to the Mac app</label>
+    <input id="session-token" type="password" autocomplete="off" placeholder="Paste connection key from the Mac app">
+    <button id="connect" type="button">Connect</button>
+    <small id="connection-status">Open PanelLens on your Mac, then copy its connection key from Browser Setup &amp; Models.</small>
+    <small>Keep the Mac app running while reading. No Screen Recording permission is needed.</small>
+    <button id="toggle" type="button" disabled>Start on this page</button>
+    <small>Start asks for access to this page and the image sites it currently uses. New image sites loaded later may need another permission request.</small>
+    <button id="cancel-processing" type="button" disabled style="margin-top:6px;background:#777">Cancel processing</button>
+    <button id="retry-errors" type="button" disabled style="margin-top:6px;background:#247445">Retry failed images</button>
+    <label for="translation-provider">Translation provider</label>
+    <select id="translation-provider"><option value="ollama">Ollama</option></select>
+    <input id="translation-model" list="installed-models" placeholder="Installed Ollama model name">
+    <datalist id="installed-models"></datalist>
+    <small>Install or import a model in Ollama first. PanelLens does not supply one.</small>
+    <button id="apply-model" type="button">Use selected model</button>
+    <small id="model-status"></small>
+    <label for="processing-mode">Processing mode</label>
+    <select id="processing-mode">
+      <option value="eco" selected>Eco — recommended, one image at a time</option>
+      <option value="balanced">Balanced — up to three images at a time</option>
+    </select>
+    <small>Start with Eco. Balanced may overload slower models.</small>
+    <label for="glossary">Name and gender glossary</label>
+    <textarea id="glossary" placeholder="베리엘=Belial (male)&#10;엘리스=Ellis"></textarea>
+    <small>One Korean=English mapping per line. Used as reference only.</small>
+    <p id="status">Checking local engine…</p>
+    <script src="popup.js"></script>
+  </body>
+</html>

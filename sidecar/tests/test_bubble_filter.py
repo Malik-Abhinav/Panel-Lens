@@ -39,6 +39,24 @@ def _png_with_colored_sound_effect() -> bytes:
     return output.getvalue()
 
 
+def _png_with_colored_dialogue_box() -> bytes:
+    pixels = np.full((160, 200, 3), (205, 48, 58), dtype=np.uint8)
+    pixels[58:65, 65:135] = (22, 18, 18)
+    pixels[88:95, 55:145] = (22, 18, 18)
+    output = io.BytesIO()
+    Image.fromarray(pixels).save(output, format="PNG")
+    return output.getvalue()
+
+
+def _png_with_red_text_in_dark_bubble() -> bytes:
+    pixels = np.full((160, 200, 3), (18, 9, 12), dtype=np.uint8)
+    pixels[58:65, 65:135] = (235, 22, 32)
+    pixels[88:95, 55:145] = (235, 22, 32)
+    output = io.BytesIO()
+    Image.fromarray(pixels).save(output, format="PNG")
+    return output.getvalue()
+
+
 def _png_with_inverse_bubble() -> bytes:
     pixels = np.full((160, 200, 3), (245, 225, 230), dtype=np.uint8)
     y, x = np.indices((160, 200))
@@ -134,6 +152,63 @@ def test_short_colored_sound_effect_on_white_is_filtered() -> None:
 
     kept, filtered_count = filter_dialogue_regions(
         _png_with_colored_sound_effect(),
+        [region],
+    )
+
+    assert kept == []
+    assert filtered_count == 1
+
+
+def test_dark_text_in_uniform_colored_dialogue_box_is_kept() -> None:
+    region = _region()
+    region["original"] = "여기서 기다려!"
+    region["line_count"] = 2
+
+    kept, filtered_count = filter_dialogue_regions(
+        _png_with_colored_dialogue_box(),
+        [region],
+    )
+
+    assert filtered_count == 0
+    assert kept[0]["region_type"] == "dialogue"
+    assert kept[0]["bubble_style"] == "colored"
+
+
+def test_short_sound_effect_in_colored_box_is_filtered() -> None:
+    region = _region()
+    region["original"] = "쾅"
+
+    kept, filtered_count = filter_dialogue_regions(
+        _png_with_colored_dialogue_box(),
+        [region],
+    )
+
+    assert kept == []
+    assert filtered_count == 1
+
+
+def test_red_dialogue_text_in_dark_bubble_is_kept() -> None:
+    region = _region()
+    region["original"] = "흥미진진하군."
+    region["bbox"] = [45, 40, 110, 70]
+
+    kept, filtered_count = filter_dialogue_regions(
+        _png_with_red_text_in_dark_bubble(),
+        [region],
+    )
+
+    assert filtered_count == 0
+    assert kept[0]["region_type"] == "dialogue"
+    assert kept[0]["bubble_style"] == "colored-inverse"
+
+
+def test_short_red_sound_effect_in_dark_art_is_filtered() -> None:
+    region = _region()
+    region["original"] = "쾅"
+    region["bbox"] = [45, 40, 110, 70]
+
+    kept, filtered_count = filter_dialogue_regions(
+        _png_with_red_text_in_dark_bubble(),
         [region],
     )
 

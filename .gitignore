@@ -38,3 +38,15 @@ evaluation/chinese/images/*.webp
 # Keep instructions in ignored image directories
 !evaluation/korean/images/README.md
 !evaluation/chinese/images/README.md
+
+# Preserve local research and copyrighted validation material outside public Git.
+B3_SHIPPING.md
+PERFORMANCE_ARCHITECTURE_INVESTIGATION.md
+PHASE8A_B3_RUNTIME_EQUIVALENCE.md
+REAL_WEBTOON_B3_VALIDATION.md
+evaluation_v2/
+experiments/phase8a_run_suite.py
+phase8a_*.json
+real_webtoon*.json
+real_webtoon*.jsonl
+distribution/clean-user-check.json

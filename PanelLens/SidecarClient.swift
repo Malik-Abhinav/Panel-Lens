@@ -31,6 +31,8 @@ struct SidecarRegion: Decodable {
 
 struct SidecarResponse: Decodable {
     let requestID: String?
+    let imageID: String?
+    let modelState: String?
     let status: String
     let type: String?
     let regions: [SidecarRegion]?
@@ -42,9 +44,14 @@ struct SidecarResponse: Decodable {
     let filteredTextCount: Int?
     let error: SidecarError?
     let runtime: SidecarRuntime?
+    let browserBridge: BrowserBridgeStatus?
+    let settings: TranslationSettings?
+    let performance: OllamaPerformanceMetrics?
 
     enum CodingKeys: String, CodingKey {
         case requestID = "request_id"
+        case imageID = "image_id"
+        case modelState = "model_state"
         case status
         case type
         case regions
@@ -56,7 +63,47 @@ struct SidecarResponse: Decodable {
         case filteredTextCount = "filtered_text_count"
         case error
         case runtime
+        case browserBridge = "browser_bridge"
+        case settings
+        case performance
     }
+}
+
+struct OllamaPerformanceMetrics: Decodable {
+    let loadDurationMS: Double?
+    let promptEvaluationDurationMS: Double?
+    let generationDurationMS: Double?
+    let totalDurationMS: Double?
+    let promptTokenCount: Int?
+    let generatedTokenCount: Int?
+    let tokensPerSecond: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case loadDurationMS = "ollama_load_duration_ms"
+        case promptEvaluationDurationMS = "ollama_prompt_eval_duration_ms"
+        case generationDurationMS = "ollama_generation_duration_ms"
+        case totalDurationMS = "ollama_total_duration_ms"
+        case promptTokenCount = "ollama_prompt_token_count"
+        case generatedTokenCount = "ollama_generated_token_count"
+        case tokensPerSecond = "ollama_tokens_per_second"
+    }
+}
+
+struct TranslationSettings: Decodable {
+    let provider: String
+    let model: String
+    let ollamaModels: [String]
+    let runtime: SidecarRuntime
+    enum CodingKeys: String, CodingKey {
+        case provider, model, runtime
+        case ollamaModels = "ollama_models"
+    }
+}
+
+struct BrowserBridgeStatus: Decodable {
+    let ready: Bool
+    let code: String
+    let message: String
 }
 
 struct SidecarRuntime: Decodable {
@@ -75,6 +122,7 @@ struct SidecarError: Decodable {
 final class SidecarClient {
     var onStateChange: ((SidecarState, String) -> Void)?
     var onResponse: ((SidecarResponse) -> Void)?
+    var onBridgeChange: ((BrowserBridgeStatus) -> Void)?
     var onRuntimeChange: ((SidecarRuntime) -> Void)?
 
     /// The process identifier of the running Python sidecar, if any. Used by
@@ -82,9 +130,21 @@ final class SidecarClient {
     /// consume.
     var runningProcessPID: Int32? { process?.processIdentifier }
 
+    private let resourcesURL: URL?
+    private let supportURL: URL
+    private var installationTask: Task<Void, Never>?
+    private var pendingSelection: (String, String)?
+    private var pendingSettingsRead = false
+
+    init(resourcesURL: URL? = Bundle.main.resourceURL, supportURL: URL? = nil) {
+        self.resourcesURL = resourcesURL
+        self.supportURL = supportURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("PanelLens", isDirectory: true)
+    }
+
     private var process: Process?
     private var inputHandle: FileHandle?
     private var outputBuffer = Data()
+    private var activeProcessID = UUID()
     private var intentionalStop = false
     private var restartAttempts = 0
 
@@ -94,17 +154,49 @@ final class SidecarClient {
             return
         }
 
-        guard
-            let scriptURL = Self.sidecarScriptURL(),
-            let pythonURL = Self.pythonURL(nextTo: scriptURL)
-        else {
-            publish(
-                .error,
-                "Python sidecar files were not found. Reopen the Xcode project from the repository."
-            )
+        guard installationTask == nil else { return }
+        guard let resourcesURL else {
+            publish(.error, "PanelLens resources are missing. Reinstall the app.")
             return
         }
+        installationTask = Task { [weak self] in
+            guard let self else { return }
+            defer { installationTask = nil }
+            do {
+                let runtime = try await RuntimeInstaller.prepare(resources: resourcesURL, support: supportURL) { [weak self] message in
+                    Task { @MainActor in self?.publish(.starting, message) }
+                }
+                guard !Task.isCancelled else { return }
+                launch(runtime: runtime, resources: resourcesURL)
+            } catch {
+                publish(.error, error.localizedDescription)
+            }
+        }
+    }
 
+    func repairRuntime() {
+        guard installationTask == nil, let resourcesURL else { return }
+        stop()
+        installationTask = Task { [weak self] in
+            guard let self else { return }
+            defer { installationTask = nil }
+            do {
+                let runtime = try await RuntimeInstaller.prepare(resources: resourcesURL, support: supportURL, repair: true) { [weak self] message in
+                    Task { @MainActor in self?.publish(.starting, message) }
+                }
+                guard !Task.isCancelled else { return }
+                launch(runtime: runtime, resources: resourcesURL)
+            } catch { publish(.error, error.localizedDescription) }
+        }
+    }
+
+    private func launch(runtime: URL, resources: URL) {
+        let scriptURL = resources.appendingPathComponent("sidecar/main.py")
+        let pythonURL = runtime.appendingPathComponent("python/bin/python3")
+        guard FileManager.default.fileExists(atPath: scriptURL.path) else {
+            publish(.error, "PanelLens engine files are missing. Reinstall the app.")
+            return
+        }
         intentionalStop = false
         publish(.starting, "Starting local Python sidecar…")
 
@@ -121,6 +213,22 @@ final class SidecarClient {
         process.standardError = errorPipe
 
         var environment = ProcessInfo.processInfo.environment
+        for name in ["PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "PANELLENS_TRANSLATION_RUNTIME"] { environment.removeValue(forKey: name) }
+        environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+        environment["PYTHONNOUSERSITE"] = "1"
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        environment["PANELLENS_DEFER_WARMUP"] = "1"
+        environment["PANELLENS_BROWSER_BRIDGE"] = "1"
+        environment["PANELLENS_HTTP_PORT"] = "8765"
+        do { environment["PANELLENS_HTTP_TOKEN"] = try connectionKey() }
+        catch { publish(.error, "Could not prepare browser connection: \(error.localizedDescription)"); return }
+        environment["PANELLENS_MODEL_CACHE"] = supportURL.appendingPathComponent("models").path
+        environment["PANELLENS_SETTINGS_PATH"] = supportURL.appendingPathComponent("translation.json").path
+        environment["PANELLENS_CACHE_DB"] = supportURL.appendingPathComponent("cache.sqlite").path
+        environment["PANELLENS_OCR_ASSETS"] = runtime.appendingPathComponent("ocr").path
+        environment["PADDLE_PDX_CACHE_HOME"] = supportURL.appendingPathComponent("ocr-cache").path
+        environment["HF_HOME"] = supportURL.appendingPathComponent("huggingface").path
+        environment["SSL_CERT_FILE"] = environment["SSL_CERT_FILE"] ?? runtime.appendingPathComponent("python/lib/python3.12/site-packages/certifi/cacert.pem").path
         environment["PYTHONUNBUFFERED"] = "1"
         environment["PANELLENS_SIDECAR_LOG"] = Self.logURL().path
         process.environment = environment
@@ -147,8 +255,11 @@ final class SidecarClient {
             Self.appendToLog(text)
         }
 
+        let launchedPID = UUID()
+        activeProcessID = launchedPID
         process.terminationHandler = { [weak self] process in
             Task { @MainActor [weak self] in
+                guard self?.activeProcessID == launchedPID else { return }
                 self?.handleTermination(status: process.terminationStatus)
             }
         }
@@ -158,6 +269,13 @@ final class SidecarClient {
             self.process = process
             inputHandle = inputPipe.fileHandleForWriting
             sendPing()
+            if let selection = pendingSelection {
+                pendingSelection = nil
+                configureTranslation(provider: selection.0, model: selection.1)
+            } else if pendingSettingsRead {
+                pendingSettingsRead = false
+                readTranslationSettings()
+            }
         } catch {
             publish(
                 .error,
@@ -165,6 +283,33 @@ final class SidecarClient {
             )
         }
     }
+
+    func connectionKey() throws -> String {
+        let file = supportURL.appendingPathComponent("browser-key")
+        if let key = try? String(contentsOf: file, encoding: .utf8), key.count == 64 {
+            return key
+        }
+        try FileManager.default.createDirectory(at: supportURL, withIntermediateDirectories: true)
+        let key = (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "").lowercased()
+        try key.write(to: file, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        return key
+    }
+
+    func revealExtension() throws {
+        guard let resourcesURL else { return }
+        let source = resourcesURL.appendingPathComponent("extension")
+        let destination = supportURL.appendingPathComponent("BrowserExtension")
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        for name in ["manifest.json", "popup.html", "popup.js", "service-worker.js", "content-script.js", "prefetch-core.js", "overlay.css"] {
+            let target = destination.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
+            try FileManager.default.copyItem(at: source.appendingPathComponent(name), to: target)
+        }
+        // Return the stable directory; the UI reveals it using Finder.
+    }
+
+    var extensionDirectory: URL { supportURL.appendingPathComponent("BrowserExtension") }
 
     func sendTestTranslation() {
         send(
@@ -178,6 +323,24 @@ final class SidecarClient {
         )
     }
 
+    func readTranslationSettings() {
+        guard process?.isRunning == true else {
+            pendingSettingsRead = true
+            start()
+            return
+        }
+        send(type: "translation_settings")
+    }
+
+    func configureTranslation(provider: String, model: String) {
+        guard process?.isRunning == true else {
+            pendingSelection = (provider, model)
+            start()
+            return
+        }
+        send(type: "configure_translation", payload: ["provider": provider, "model": model])
+    }
+
     func checkRuntime() {
         if process?.isRunning == true {
             sendPing()
@@ -189,12 +352,16 @@ final class SidecarClient {
     func translate(
         imageData: Data,
         requestID: String,
+        imageID: String,
+        priority: String = "visible",
         series: String = "",
         chapter: Int? = nil,
         context: [[String: String]] = []
     ) -> Bool {
         var payload: [String: Any] = [
             "image_base64": imageData.base64EncodedString(),
+            "image_id": imageID,
+            "priority": priority,
             "series": series,
             "context": context,
         ]
@@ -211,6 +378,7 @@ final class SidecarClient {
 
     func stop() {
         intentionalStop = true
+        activeProcessID = UUID()
         inputHandle?.closeFile()
         process?.terminate()
         process = nil
@@ -277,13 +445,14 @@ final class SidecarClient {
     }
 
     private func handle(_ response: SidecarResponse) {
+        if let bridge = response.browserBridge { onBridgeChange?(bridge) }
         if response.status == "ok", response.type == "pong" {
             restartAttempts = 0
             if let runtime = response.runtime {
                 onRuntimeChange?(runtime)
             }
             if let runtime = response.runtime, !runtime.ready {
-                publish(.error, runtime.message)
+                publish(["loading", "downloading", "verifying"].contains(runtime.code) ? .starting : .error, runtime.message)
             } else {
                 publish(
                     .ready,
@@ -333,44 +502,6 @@ final class SidecarClient {
 
     private func publish(_ state: SidecarState, _ message: String) {
         onStateChange?(state, message)
-    }
-
-    private static func sidecarScriptURL() -> URL? {
-        if let bundledURL = Bundle.main.url(
-            forResource: "main",
-            withExtension: "py",
-            subdirectory: "sidecar"
-        ) {
-            return bundledURL
-        }
-
-        let sourceFile = URL(fileURLWithPath: #filePath)
-        let repositoryRoot = sourceFile
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let developmentURL = repositoryRoot
-            .appendingPathComponent("sidecar")
-            .appendingPathComponent("main.py")
-
-        return FileManager.default.fileExists(atPath: developmentURL.path)
-            ? developmentURL
-            : nil
-    }
-
-    private static func pythonURL(nextTo scriptURL: URL) -> URL? {
-        let virtualEnvironmentPython = scriptURL
-            .deletingLastPathComponent()
-            .appendingPathComponent(".venv/bin/python3")
-        if FileManager.default.isExecutableFile(
-            atPath: virtualEnvironmentPython.path
-        ) {
-            return virtualEnvironmentPython
-        }
-
-        let systemPython = URL(fileURLWithPath: "/usr/bin/python3")
-        return FileManager.default.isExecutableFile(atPath: systemPython.path)
-            ? systemPython
-            : nil
     }
 
     nonisolated private static func logURL() -> URL {

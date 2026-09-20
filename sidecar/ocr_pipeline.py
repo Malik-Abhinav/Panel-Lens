@@ -6,11 +6,14 @@ import io
 import os
 import re
 import sys
+import time
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from performance_instrumentation import emit
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -218,7 +221,13 @@ class KoreanOCRPipeline:
         with redirect_stdout(sys.stderr):
             from paddleocr import PaddleOCR
 
+            assets = os.environ.get("PANELLENS_OCR_ASSETS")
+            packaged = {} if not assets else {
+                "text_detection_model_dir": str(Path(assets) / "PP-OCRv5_mobile_det"),
+                "text_recognition_model_dir": str(Path(assets) / "korean_PP-OCRv5_mobile_rec"),
+            }
             self._ocr = PaddleOCR(
+                **packaged,
                 lang="korean",
                 ocr_version="PP-OCRv5",
                 text_detection_model_name="PP-OCRv5_mobile_det",
@@ -232,8 +241,38 @@ class KoreanOCRPipeline:
         import numpy as np
         from PIL import Image
 
+        decode_started = time.monotonic_ns()
+        emit("decode_start", decoder="pillow", byte_size=len(image_bytes))
         with Image.open(io.BytesIO(image_bytes)) as source:
+            width, height = source.size
+            emit(
+                "resource_ready",
+                image_width=width,
+                image_height=height,
+                byte_size=len(image_bytes),
+            )
+            preprocess_started = time.monotonic_ns()
+            emit(
+                "preprocess_start",
+                image_width=width,
+                image_height=height,
+            )
             image = np.asarray(source.convert("RGB"))
+        emit(
+            "decode_end",
+            duration_ms=round((time.monotonic_ns() - decode_started) / 1_000_000, 3),
+            decoder="pillow",
+            image_width=width,
+            image_height=height,
+        )
+        emit(
+            "preprocess_end",
+            duration_ms=round(
+                (time.monotonic_ns() - preprocess_started) / 1_000_000, 3
+            ),
+            image_width=width,
+            image_height=height,
+        )
 
         with redirect_stdout(sys.stderr):
             predictions = list(

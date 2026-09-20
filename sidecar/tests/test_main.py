@@ -1,14 +1,20 @@
 import base64
+import io
 
 import numpy as np
+from PIL import Image
 
 from main import _translation_context
 from main import handle
+from main import handle_batch
+from main import _resize_for_ocr
 from ocr_pipeline import group_ocr_lines
 from translation_pipeline import TranslationError
 
 
-def test_ping_returns_pong() -> None:
+def test_ping_returns_pong(monkeypatch) -> None:
+    import translation_pipeline as pipeline
+    monkeypatch.setattr(pipeline, "OLLAMA_MODEL", "hy-mt2:7b")
     runtime = {
         "ready": True,
         "code": "ready",
@@ -20,7 +26,9 @@ def test_ping_returns_pong() -> None:
         runtime_handler=lambda: runtime,
     )
 
-    assert result == {
+    assert result["browser_bridge"]["session"]
+    assert result["translation_identity"]["model"]
+    assert {key: result[key] for key in ("protocol_version", "request_id", "status", "type", "runtime")} == {
         "protocol_version": 1,
         "request_id": "test-1",
         "status": "ok",
@@ -89,6 +97,95 @@ def test_translate_rejects_invalid_base64() -> None:
 
     assert result["status"] == "error"
     assert result["error"]["code"] == "invalid_image"
+
+
+def test_batch_pipelines_each_image_as_soon_as_ocr_completes() -> None:
+    translated_batches: list[list[str]] = []
+    ocr_calls = 0
+
+    def ocr(image: bytes) -> list[dict[str, object]]:
+        nonlocal ocr_calls
+        number = ocr_calls
+        ocr_calls += 1
+        return [
+            {
+                "bbox": [1, 2, 3, 4],
+                "original": f"대사 {number}",
+                "translation": "",
+                "language": "ko",
+                "confidence": 0.99,
+            }
+        ]
+
+    def translate(
+        regions: list[dict[str, object]],
+        _: str,
+        __: list[dict[str, str]],
+    ) -> list[dict[str, object]]:
+        translated_batches.append([str(region["original"]) for region in regions])
+        return [
+            {
+                **region,
+                "translation": f"English {str(region['original']).split()[-1]}",
+            }
+            for region in regions
+        ]
+
+    result = handle_batch(
+        {
+            "request_id": "batch-1",
+            "images": [
+                    {
+                        "image_id": f"image-{index}",
+                        "image_base64": base64.b64encode(
+                            _test_png_bytes()
+                        ).decode(),
+                }
+                for index in range(3)
+            ],
+        },
+        ocr_handler=ocr,
+        bubble_handler=lambda _, regions: (regions, 0),
+        translation_handler=translate,
+    )
+
+    assert result["status"] == "ok"
+    assert translated_batches == [["대사 0"], ["대사 1"], ["대사 2"]]
+    assert [
+        image["regions"][0]["translation"] for image in result["images"]
+    ] == ["English 0", "English 1", "English 2"]
+
+
+def _test_png_bytes() -> bytes:
+    output = io.BytesIO()
+    Image.new("RGB", (16, 16), "white").save(output, format="PNG")
+    return output.getvalue()
+
+
+def test_batch_rejects_more_than_three_images() -> None:
+    result = handle_batch(
+        {
+            "request_id": "too-many",
+            "images": [
+                {"image_id": str(index), "image_base64": "aW1hZ2U="}
+                for index in range(4)
+            ],
+        }
+    )
+
+    assert result["status"] == "error"
+    assert result["error"]["code"] == "invalid_batch"
+
+
+def test_resize_for_ocr_only_downscales_wide_images() -> None:
+    output = io.BytesIO()
+    Image.new("RGB", (2000, 1000), "white").save(output, format="PNG")
+
+    resized, coordinate_scale = _resize_for_ocr(output.getvalue(), 1000)
+
+    with Image.open(io.BytesIO(resized)) as image:
+        assert image.size == (1000, 500)
+    assert coordinate_scale == 2.0
 
 
 def test_translate_reports_ocr_failure() -> None:

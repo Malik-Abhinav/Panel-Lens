@@ -5,30 +5,39 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
+import time
 import urllib.error
 import urllib.request
 from collections import OrderedDict
+import threading
 from typing import Any
+
+from performance_instrumentation import add_metrics, emit, set_model_state
+from translation_settings import saved_settings
 
 
 OLLAMA_BASE_URL = os.environ.get(
     "PANELLENS_OLLAMA_URL", "http://127.0.0.1:11434"
 )
-OLLAMA_MODEL = os.environ.get("PANELLENS_OLLAMA_MODEL", "hy-mt2:7b")
+OLLAMA_MODEL = os.environ.get("PANELLENS_OLLAMA_MODEL", saved_settings().get("model", ""))
 TRANSLATION_ADAPTER = os.environ.get(
     "PANELLENS_TRANSLATION_ADAPTER", "auto"
 )
 OLLAMA_KEEP_ALIVE = os.environ.get("PANELLENS_OLLAMA_KEEP_ALIVE", "30m")
+TRANSLATION_RUNTIME = "ollama"
 TRANSLATION_CACHE_SIZE = max(
     1, int(os.environ.get("PANELLENS_TRANSLATION_CACHE_SIZE", "64"))
 )
 TRANSLATION_CONTEXT_SIZE = 20
 TRANSLATION_CONTEXT_CHARACTER_BUDGET = 6000
-TRANSLATION_PROMPT_VERSION = "2026-07-31.rolling-context-v1"
+TRANSLATION_PROMPT_VERSION = "2026-08-08.series-glossary-v3"
 _translation_cache: OrderedDict[
     tuple[str, str, str, str, tuple[tuple[str, str], ...], tuple[str, ...]],
     list[dict[str, Any]],
 ] = OrderedDict()
+_model_condition = threading.Condition()
+_model_state = "cold"
 
 
 class TranslationError(RuntimeError):
@@ -37,8 +46,30 @@ class TranslationError(RuntimeError):
         self.code = code
 
 
+def translation_runtime_identity() -> dict[str, Any]:
+    return {
+        "model": OLLAMA_MODEL,
+        "model_version": OLLAMA_MODEL,
+        "artifact_sha256": "",
+        "model_repository_sha": "",
+        "prompt_version": TRANSLATION_PROMPT_VERSION,
+        "runtime": "ollama",
+    }
+
+
+def translation_runtime_capabilities() -> dict[str, Any]:
+    return {"supports_multi_region_generation": True, "max_concurrent_generations": 1}
+
+
 def translation_runtime_status() -> dict[str, Any]:
     """Report whether Ollama and the configured local model are available."""
+    if not OLLAMA_MODEL:
+        return {
+            "ready": False,
+            "code": "model_unselected",
+            "model": "",
+            "message": "Choose a model installed in Ollama in Browser Setup & Models.",
+        }
     request = urllib.request.Request(
         f"{OLLAMA_BASE_URL}/api/tags",
         method="GET",
@@ -74,12 +105,25 @@ def translation_runtime_status() -> dict[str, Any]:
         "ready": True,
         "code": "ready",
         "model": OLLAMA_MODEL,
-        "message": f"Local OCR and {OLLAMA_MODEL} are ready.",
+        "message": f"Ollama is running and {OLLAMA_MODEL} is installed. Translation speed and output have not been checked.",
     }
 
 
 def warm_translation_model() -> bool:
     """Ask Ollama to load the model without generating any text."""
+    global _model_state
+    if not OLLAMA_MODEL:
+        return False
+    with _model_condition:
+        if _model_state == "warm":
+            return True
+        if _model_state == "loading":
+            _model_condition.wait_for(lambda: _model_state != "loading", timeout=90)
+            return _model_state == "warm"
+        _model_state = "loading"
+    set_model_state("loading")
+    emit("translation_queue_enter", model=OLLAMA_MODEL, model_state="loading")
+    started = time.monotonic_ns()
     payload = {
         "model": OLLAMA_MODEL,
         "prompt": "",
@@ -93,11 +137,53 @@ def warm_translation_model() -> bool:
         method="POST",
     )
 
+    succeeded = False
     try:
-        with urllib.request.urlopen(request, timeout=90):
-            return True
-    except (urllib.error.URLError, TimeoutError):
-        return False
+        with urllib.request.urlopen(request, timeout=90) as response:
+            envelope = json.load(response)
+            if isinstance(envelope, dict):
+                metrics = ollama_metrics_from_envelope(envelope)
+                add_metrics(**metrics)
+                emit(
+                    "translation_model_metrics",
+                    model=OLLAMA_MODEL,
+                    model_state="loading",
+                    warmup=True,
+                    **metrics,
+                )
+            succeeded = True
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        succeeded = False
+    finally:
+        with _model_condition:
+            _model_state = "warm" if succeeded else "cold"
+            _model_condition.notify_all()
+        set_model_state(_model_state)
+        emit(
+            "translation_end",
+            duration_ms=round((time.monotonic_ns() - started) / 1_000_000, 3),
+            model=OLLAMA_MODEL,
+            model_state=_model_state,
+            warmup=True,
+        )
+    return succeeded
+
+
+def translation_model_state() -> str:
+    with _model_condition:
+        return _model_state
+
+
+def _ensure_translation_model_ready() -> str:
+    """Wait for background warm-up, or perform it once if it has not started."""
+    if not OLLAMA_MODEL:
+        raise TranslationError("model_unselected", "Choose an installed Ollama model in Browser Setup & Models.")
+    initial_state = translation_model_state()
+    if initial_state != "warm":
+        warm_translation_model()
+    state = translation_model_state()
+    set_model_state(state)
+    return state
 
 
 def translate_korean_regions(
@@ -108,11 +194,17 @@ def translate_korean_regions(
     if not regions:
         return []
 
+    _ensure_translation_model_ready()
+
     bounded_context = _bounded_context(context)
+    identity = translation_runtime_identity()
     cache_key = (
-        TRANSLATION_PROMPT_VERSION,
-        OLLAMA_MODEL,
-        _active_adapter(),
+        identity["prompt_version"],
+        identity["model"],
+        identity["model_version"],
+        identity["artifact_sha256"],
+        identity["model_repository_sha"],
+        identity["runtime"],
         series.strip(),
         tuple(
             (item["korean"], item["english"])
@@ -123,25 +215,20 @@ def translate_korean_regions(
             for region in regions
         ),
     )
+    emit("cache_lookup", cache_level="translation_lru", **identity)
     cached = _translation_cache.get(cache_key)
     if cached is not None:
+        emit("cache_hit", cache_level="translation_lru", cache_status="hit", **identity)
         _translation_cache.move_to_end(cache_key)
         return _attach_translations(regions, cached)
+    emit("cache_miss", cache_level="translation_lru", cache_status="miss", **identity)
 
     try:
-        translations = _request_page_translations(
-            regions,
-            series,
-            bounded_context,
-        )
+        translations = _request_page_translations(regions, series, bounded_context)
     except TranslationError as error:
         if error.code != "invalid_translation_response":
             raise
-        translations = _request_page_translations(
-            regions,
-            series,
-            bounded_context,
-        )
+        translations = _request_page_translations(regions, series, bounded_context)
 
     for index, region in enumerate(regions):
         source = str(region["original"])
@@ -161,6 +248,8 @@ def translate_korean_regions(
 
     for index, region in enumerate(regions):
         source = str(region["original"])
+        if translations[index].get("translation_error"):
+            continue
         problems = _translation_problems(
             regions,
             translations,
@@ -201,12 +290,14 @@ def translate_korean_regions(
             repaired["index"] = index
             translations[index] = repaired
 
-    _translation_cache[cache_key] = [
-        dict(translation) for translation in translations
-    ]
-    _translation_cache.move_to_end(cache_key)
-    while len(_translation_cache) > TRANSLATION_CACHE_SIZE:
-        _translation_cache.popitem(last=False)
+    if not any(item.get("translation_error") for item in translations):
+        _translation_cache[cache_key] = [
+            dict(translation) for translation in translations
+        ]
+        _translation_cache.move_to_end(cache_key)
+        while len(_translation_cache) > TRANSLATION_CACHE_SIZE:
+            _translation_cache.popitem(last=False)
+        emit("cache_store", cache_level="translation_lru")
     return _attach_translations(regions, translations)
 
 
@@ -386,11 +477,22 @@ def _bounded_context(
 def _format_previous_context(context: list[dict[str, str]]) -> str:
     if not context:
         return "(none)"
-    return "\n".join(
-        f"[previous {index + 1}] Korean: {item['korean']}\n"
-        f"[previous {index + 1}] English: {item['english']}"
-        for index, item in enumerate(context)
-    )
+    lines = []
+    previous_index = 0
+    for item in context:
+        if item["korean"].casefold().startswith("[glossary] "):
+            korean = item["korean"][len("[glossary] ") :]
+            lines.append(
+                f"[series glossary] Korean: {korean}\n"
+                f"[series glossary] Required English: {item['english']}"
+            )
+            continue
+        previous_index += 1
+        lines.append(
+            f"[previous {previous_index}] Korean: {item['korean']}\n"
+            f"[previous {previous_index}] English: {item['english']}"
+        )
+    return "\n".join(lines)
 
 
 def _active_adapter(
@@ -454,7 +556,13 @@ def _build_hymt_page_prompt(
         "per block. Preserve names, quantities, negation, pronouns, sentence "
         "fragments, politeness, slang strength, and tone. Translate the "
         "intended meaning of dialect rather than transliterating dialect "
-        "words. Do not invent or omit information. Output only the numbered "
+        "words. Korean often omits subjects and gender. Never guess he, she, "
+        "or a speaker identity unless the current text or established context "
+        "supports it; prefer natural gender-neutral wording. Reuse an "
+        "established romanized name and every series-glossary spelling "
+        "exactly. Parenthetical gender in the glossary is metadata only; do "
+        "not output the parenthetical text. Do not invent or omit "
+        "information. Output only the numbered "
         "English translations without explanations.\n\n"
         "Current blocks to translate:\n"
         f"{blocks}"
@@ -605,6 +713,8 @@ Requirements:
 - Romanize Korean personal names consistently. Do not leave Korean, Chinese, or
   other CJK characters in English output. If an official spelling is unknown,
   use standard romanization.
+- Reuse every series-glossary spelling exactly. Parenthetical gender in a
+  glossary entry is metadata only and must not appear in translated dialogue.
 - A block containing only a name with vocative -아/-야 only calls that person;
   do not expand it into surrounding dialogue.
 - OCR may contain spacing or syllable errors. Correct only when grammar and page
@@ -771,10 +881,20 @@ def _send_ollama_chat(payload: dict[str, Any]) -> dict[str, Any]:
             "ollama_request_failed",
             f"Ollama returned HTTP {error.code}: {body[:200]}",
         ) from error
-    except (urllib.error.URLError, TimeoutError) as error:
+    except (TimeoutError, socket.timeout) as error:
+        raise TranslationError(
+            "ollama_timeout",
+            f"Ollama did not finish a response from {payload['model']} within 90 seconds. Try a different model or retry this image.",
+        ) from error
+    except urllib.error.URLError as error:
+        if isinstance(error.reason, (TimeoutError, socket.timeout)):
+            raise TranslationError(
+                "ollama_timeout",
+                f"Ollama did not finish a response from {payload['model']} within 90 seconds. Try a different model or retry this image.",
+            ) from error
         raise TranslationError(
             "ollama_offline",
-            "Ollama is not reachable. Start it with `ollama serve`.",
+            "Cannot connect to Ollama. Open Ollama, then try again.",
         ) from error
     except json.JSONDecodeError as error:
         raise TranslationError(
@@ -786,7 +906,52 @@ def _send_ollama_chat(payload: dict[str, Any]) -> dict[str, Any]:
             "invalid_translation_response",
             "Ollama returned an invalid response envelope.",
         )
+    metrics = ollama_metrics_from_envelope(envelope)
+    add_metrics(**metrics)
+    emit("translation_first_token", measured=False, reason="ollama_non_streaming")
+    emit(
+        "translation_model_metrics",
+        model=str(payload.get("model", OLLAMA_MODEL)),
+        model_state=translation_model_state(),
+        **metrics,
+    )
     return envelope
+
+
+def ollama_metrics_from_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
+    """Normalize Ollama nanosecond counters without retaining generated content."""
+    def milliseconds(key: str) -> float | None:
+        value = envelope.get(key)
+        if not isinstance(value, (int, float)):
+            return None
+        return round(float(value) / 1_000_000, 3)
+
+    prompt_tokens = envelope.get("prompt_eval_count")
+    generated_tokens = envelope.get("eval_count")
+    generation_duration = envelope.get("eval_duration")
+    tokens_per_second = None
+    if (
+        isinstance(generated_tokens, (int, float))
+        and isinstance(generation_duration, (int, float))
+        and generation_duration > 0
+    ):
+        tokens_per_second = round(
+            float(generated_tokens) / (float(generation_duration) / 1_000_000_000),
+            3,
+        )
+    return {
+        "ollama_load_duration_ms": milliseconds("load_duration"),
+        "ollama_prompt_eval_duration_ms": milliseconds("prompt_eval_duration"),
+        "ollama_generation_duration_ms": milliseconds("eval_duration"),
+        "ollama_total_duration_ms": milliseconds("total_duration"),
+        "ollama_prompt_token_count": prompt_tokens
+        if isinstance(prompt_tokens, int)
+        else None,
+        "ollama_generated_token_count": generated_tokens
+        if isinstance(generated_tokens, int)
+        else None,
+        "ollama_tokens_per_second": tokens_per_second,
+    }
 
 
 def _attach_translations(
@@ -799,5 +964,12 @@ def _attach_translations(
         translated_region["translation"] = translation["translation"]
         translated_region["tone"] = translation["tone"]
         translated_region["translation_confidence"] = translation["confidence"]
+        for field in (
+            "generation_latency_ms",
+            "output_tokens",
+            "translation_error",
+        ):
+            if field in translation:
+                translated_region[field] = translation[field]
         translated_regions.append(translated_region)
     return translated_regions

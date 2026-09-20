@@ -11,7 +11,7 @@ struct OverlayTranslation: Identifiable {
 @MainActor
 final class OverlayController {
     var onDismissForScroll: (() -> Void)?
-    var onScrollActivity: (() -> Void)?
+    var onScrollActivity: ((CGFloat) -> Void)?
     var shouldHandleScroll: (() -> Bool)?
 
     private let panel: NSPanel
@@ -20,6 +20,7 @@ final class OverlayController {
     private var accumulatedScroll: CGFloat = 0
     private var lastScrollEventAt: Date?
     private var dismissedForCurrentScroll = false
+    private var onFirstPaint: (() -> Void)?
 
     private let scrollDismissThreshold: CGFloat = 24
     private let scrollSequenceTimeout: TimeInterval = 0.6
@@ -44,7 +45,7 @@ final class OverlayController {
             .stationary
         ]
         panel.contentView = NSHostingView(
-            rootView: TranslationOverlayView(translations: [])
+            rootView: TranslationOverlayView(translations: [], onFirstPaint: nil)
         )
     }
 
@@ -58,9 +59,11 @@ final class OverlayController {
     func showTranslations(
         _ translations: [OverlayTranslation],
         over windowFrame: CGRect,
-        monitorScroll: Bool = true
+        monitorScroll: Bool = true,
+        onFirstPaint: (() -> Void)? = nil
     ) {
         self.translations = translations
+        self.onFirstPaint = onFirstPaint
         if monitorScroll {
             startMonitoringScroll()
         } else {
@@ -120,9 +123,21 @@ final class OverlayController {
     }
 
     private func renderTranslations() {
+        let paintCallback: (() -> Void)? = onFirstPaint == nil
+            ? nil
+            : { [weak self] in self?.reportFirstPaint() }
         panel.contentView = NSHostingView(
-            rootView: TranslationOverlayView(translations: translations)
+            rootView: TranslationOverlayView(
+                translations: translations,
+                onFirstPaint: paintCallback
+            )
         )
+    }
+
+    private func reportFirstPaint() {
+        let callback = onFirstPaint
+        onFirstPaint = nil
+        callback?()
     }
 
     private func startMonitoringScroll() {
@@ -155,7 +170,7 @@ final class OverlayController {
         let now = Date()
         if dismissedForCurrentScroll {
             lastScrollEventAt = now
-            onScrollActivity?()
+            onScrollActivity?(event.scrollingDeltaY)
             return
         }
 
@@ -185,7 +200,7 @@ final class OverlayController {
         panel.orderOut(nil)
         dismissedForCurrentScroll = true
         onDismissForScroll?()
-        onScrollActivity?()
+        onScrollActivity?(delta)
     }
 
     private func appKitFrame(for coreGraphicsFrame: CGRect) -> CGRect? {
@@ -320,6 +335,7 @@ private struct ReadingAreaSelectionView: View {
 
 private struct TranslationOverlayView: View {
     let translations: [OverlayTranslation]
+    let onFirstPaint: (() -> Void)?
 
     var body: some View {
         GeometryReader { geometry in
@@ -331,6 +347,11 @@ private struct TranslationOverlayView: View {
         }
         .background(Color.clear)
         .allowsHitTesting(false)
+        .onAppear {
+            DispatchQueue.main.async {
+                onFirstPaint?()
+            }
+        }
     }
 
     private func translationCard(

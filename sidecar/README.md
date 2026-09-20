@@ -1,5 +1,11 @@
 # PanelLens Sidecar
 
+Persistent OCR and translation results use a bounded SQLite cache. Configure it
+with `PANELLENS_CACHE_DB` and `PANELLENS_CACHE_MAX_BYTES`; authenticated clients
+may clear it through `POST /v1/caches/clear`. The cache stores recognized and
+translated text plus access times (but no raw images or URLs), so it constitutes
+local reading-history data.
+
 This directory contains the long-running local OCR and translation process.
 PanelLens launches `main.py` automatically and communicates with it through
 newline-delimited JSON over stdin/stdout.
@@ -38,6 +44,21 @@ PANELLENS_RESULT_CACHE_SIZE=8
 PANELLENS_TRANSLATION_CACHE_SIZE=64
 ```
 
+## Choose a local model
+
+The app and extension use models installed in Ollama. Install or import a model
+in Ollama first, then select it in Browser Setup & Models or the extension popup.
+Selection is saved in `~/.config/panellens/translation.json` for direct sidecar
+use, or in the app's support directory for packaged use. The current app never
+downloads a translation model. It includes the OCR engine but no translation
+model. An old unsupported selection must be replaced with an Ollama model.
+
+The local HTTP bridge and native IPC share model selection, scheduler, and caches.
+Changing models pauses reading and clears old translations; start the page again
+after the chosen model is ready. Ollama defaults to `127.0.0.1:11434`. A remote
+endpoint receives OCR text if explicitly configured. Model identity separates
+translation caches.
+
 `auto` selects Hy-MT2's numbered direct-translation adapter for model names
 starting with `hy-mt2`, and the structured JSON adapter for other model names.
 An explicit `hy-mt2` or `panelens-json` override makes model experiments
@@ -56,9 +77,9 @@ unchanged capture again avoids both OCR and model generation. Translation
 responses include separate `ocr_processing_time_ms`,
 `translation_processing_time_ms`, and `cache_hit` fields for profiling.
 
-Translations are generated in one aligned page-level request. Every OCR region
-has an ordered ID and type, allowing the model to use nearby dialogue and
-narration for continuity while returning exactly one result per region. Cheap
+The Ollama adapter generates translations in one aligned page-level request.
+Every OCR region has an
+ordered ID and type, preserving output mapping and continuity. Cheap
 structural validation catches empty output, leftover Hangul, implausible
 expansion, and duplicated translations. Only suspicious regions receive a
 separate adapter-aware repair request. A second cache normalizes harmless OCR
@@ -103,3 +124,19 @@ filtered even when they appear over a white page.
 
 If Ollama is offline or the model is missing, the sidecar returns a structured
 error for the macOS app to display.
+
+## Browser-prefetch feasibility server
+
+The time-boxed Chromium spike includes `http_server.py`, a prototype adapter
+around the same `main.handle` OCR/filter/translation path. Start it with:
+
+```sh
+.venv/bin/python http_server.py
+```
+
+It binds only to `127.0.0.1:8765` and exposes `/v1/health`,
+`/v1/images/translate`, `/v1/images/translate-batch`, and
+`/v1/sessions/clear`. A batch contains at most three ordered images: OCR and
+filtering remain per image, while retained regions share one Hy-MT2 generation.
+It is intentionally not a production pairing or authentication system. See
+`extension/README.md` for the manual feasibility test.
