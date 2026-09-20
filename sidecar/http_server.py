@@ -42,7 +42,9 @@ def origin_allowed(origin: str) -> bool:
 
 
 def request_authorized(origin: str, supplied_token: str) -> bool:
-    return origin_allowed(origin) and hmac.compare_digest(supplied_token, SESSION_TOKEN)
+    # Chrome extension service workers can omit Origin on loopback requests.
+    # A supplied foreign Origin is still rejected; every request needs the key.
+    return (not origin or origin_allowed(origin)) and hmac.compare_digest(supplied_token, SESSION_TOKEN)
 
 
 def route_request(
@@ -168,14 +170,12 @@ class PanelLensRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
-        if not self._authorized():
-            self._write_json(*_error(HTTPStatus.UNAUTHORIZED, "unauthorized", "Invalid local session token."))
+        if self._reject_unauthorized():
             return
         self._dispatch(None)
 
     def do_POST(self) -> None:
-        if not self._authorized():
-            self._write_json(*_error(HTTPStatus.UNAUTHORIZED, "unauthorized", "Invalid local session token."))
+        if self._reject_unauthorized():
             return
         content_length = self.headers.get("Content-Length")
         try:
@@ -227,6 +227,16 @@ class PanelLensRequestHandler(BaseHTTPRequestHandler):
             self.headers.get("Origin", ""),
             self.headers.get("X-PanelLens-Token", ""),
         )
+
+    def _reject_unauthorized(self) -> bool:
+        origin = self.headers.get("Origin", "")
+        if origin and not origin_allowed(origin):
+            self._write_json(*_error(HTTPStatus.FORBIDDEN, "origin_rejected", "Caller origin is not allowed."))
+            return True
+        if not self._authorized():
+            self._write_json(*_error(HTTPStatus.UNAUTHORIZED, "unauthorized", "Connection key rejected by the Mac app."))
+            return True
+        return False
 
     def log_message(self, format: str, *args: object) -> None:
         logging.info("HTTP %s", format % args)

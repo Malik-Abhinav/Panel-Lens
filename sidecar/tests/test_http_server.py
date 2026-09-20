@@ -1,7 +1,14 @@
 import base64
+import json
+import threading
 from http import HTTPStatus
+from http.server import ThreadingHTTPServer
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
-from http_server import SESSION_TOKEN, origin_allowed, request_authorized, route_request
+import pytest
+
+from http_server import PanelLensRequestHandler, SESSION_TOKEN, origin_allowed, request_authorized, route_request
 
 
 def test_health_reuses_sidecar_ping() -> None:
@@ -82,12 +89,38 @@ def test_unknown_endpoint_is_rejected() -> None:
     assert result["error"]["code"] == "not_found"
 
 
-def test_local_transport_requires_extension_origin_and_session_token() -> None:
+def test_local_transport_accepts_omitted_origin_with_valid_token() -> None:
     assert origin_allowed("chrome-extension://abcdefghijklmnopabcdefghijklmnop")
     assert not origin_allowed("https://hostile.example")
     assert request_authorized("chrome-extension://abcdefghijklmnopabcdefghijklmnop", SESSION_TOKEN)
+    assert request_authorized("", SESSION_TOKEN)
+    assert not request_authorized("", "wrong")
     assert not request_authorized("chrome-extension://abcdefghijklmnopabcdefghijklmnop", "wrong")
     assert not request_authorized("https://hostile.example", SESSION_TOKEN)
+
+
+def test_http_health_accepts_chrome_request_without_origin() -> None:
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PanelLensRequestHandler)
+    except PermissionError:
+        pytest.skip("This sandbox does not permit binding a loopback socket")
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/v1/health"
+        with urlopen(Request(url, headers={"X-PanelLens-Token": SESSION_TOKEN}), timeout=3) as response:
+            assert response.status == 200
+            assert json.load(response)["type"] == "pong"
+        with pytest.raises(HTTPError) as foreign:
+            urlopen(Request(url, headers={"Origin": "https://hostile.example", "X-PanelLens-Token": SESSION_TOKEN}), timeout=3)
+        assert foreign.value.code == 403
+        with pytest.raises(HTTPError) as wrong_key:
+            urlopen(Request(url, headers={"X-PanelLens-Token": "wrong"}), timeout=3)
+        assert wrong_key.value.code == 401
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=3)
 
 
 def test_request_control_routes_cancel_and_reprioritize() -> None:

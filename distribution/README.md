@@ -10,4 +10,4 @@ Use `scripts/package_runtime.py` to assemble the pinned Python and OCR engine, t
 
 Inspect the ZIP file list to confirm it contains the app and extension, with no translation weights, training material, research images, credentials, or logs. Verify the ZIP checksum. On a clean Apple Silicon Mac, test first launch and Apple's [Open Anyway](https://support.apple.com/en-gb/102445) flow, choose an installed Ollama model, connect the unpacked extension, and verify a real page receives an overlay. Test model switching and an app update. An unpacked extension needs manual Reload after updating the app.
 
-Public download, first-open, and full browser overlay checks remain unverified. Do not describe an untested asset as a verified installer.
+The 0.3.0 ZIP received one clean-account test. It exposed a Chrome connection failure and several recovery and setup problems. The 0.3.1 changes have automated checks, but first-open and long-page reading must be tested again in a second macOS account before a public download is described as verified.

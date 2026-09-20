@@ -13,6 +13,7 @@ from translation_pipeline import ollama_metrics_from_envelope
 from translation_pipeline import _parse_numbered_translations
 from translation_pipeline import _request_hymt_page
 from translation_pipeline import _request_translations
+from translation_pipeline import _send_ollama_chat
 from translation_pipeline import _romanize_korean_name
 from translation_pipeline import _translation_problems
 from translation_pipeline import translate_korean_regions
@@ -67,6 +68,14 @@ def test_runtime_status_reports_missing_model() -> None:
 
     assert result["ready"] is False
     assert result["code"] == "model_missing"
+
+
+def test_generation_timeout_is_not_reported_as_ollama_offline() -> None:
+    with patch("translation_pipeline.urllib.request.urlopen", side_effect=TimeoutError):
+        with pytest.raises(pipeline.TranslationError) as raised:
+            _send_ollama_chat({"model": "installed-model"})
+    assert raised.value.code == "ollama_timeout"
+    assert "90 seconds" in str(raised.value)
 
 
 def test_attach_translations_preserves_ocr_geometry() -> None:

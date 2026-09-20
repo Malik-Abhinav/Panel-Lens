@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -104,7 +105,7 @@ def translation_runtime_status() -> dict[str, Any]:
         "ready": True,
         "code": "ready",
         "model": OLLAMA_MODEL,
-        "message": f"Local OCR and {OLLAMA_MODEL} are ready.",
+        "message": f"Ollama is running and {OLLAMA_MODEL} is installed. Translation speed and output have not been checked.",
     }
 
 
@@ -880,10 +881,20 @@ def _send_ollama_chat(payload: dict[str, Any]) -> dict[str, Any]:
             "ollama_request_failed",
             f"Ollama returned HTTP {error.code}: {body[:200]}",
         ) from error
-    except (urllib.error.URLError, TimeoutError) as error:
+    except (TimeoutError, socket.timeout) as error:
+        raise TranslationError(
+            "ollama_timeout",
+            f"Ollama did not finish a response from {payload['model']} within 90 seconds. Try a different model or retry this image.",
+        ) from error
+    except urllib.error.URLError as error:
+        if isinstance(error.reason, (TimeoutError, socket.timeout)):
+            raise TranslationError(
+                "ollama_timeout",
+                f"Ollama did not finish a response from {payload['model']} within 90 seconds. Try a different model or retry this image.",
+            ) from error
         raise TranslationError(
             "ollama_offline",
-            "Ollama is not reachable. Start it with `ollama serve`.",
+            "Cannot connect to Ollama. Open Ollama, then try again.",
         ) from error
     except json.JSONDecodeError as error:
         raise TranslationError(

@@ -97,7 +97,10 @@ test("model selection stops all reader tabs before changing the provider", async
         sendMessage: async (id, message) => { events.push(`stop-${id}`); assert.equal(message.enabled, false); }
       }
     },
-    fetch: async (_url, options) => {
+    fetch: async (url, options) => {
+      if (url.endsWith("/translation/settings") && options.method === "GET") {
+        return new Response(JSON.stringify({ status: "ok", settings: { ollama_models: ["my-local-model"] } }));
+      }
       events.push("configure");
       assert.equal(JSON.parse(options.body).provider, "ollama");
       return new Response(JSON.stringify({ status: "ok" }));
@@ -107,4 +110,22 @@ test("model selection stops all reader tabs before changing the provider", async
   const result = await new Promise(resolve => listener({ type: "PANELLENS_SET_MODEL", settings: { provider: "ollama", model: "my-local-model" } }, {}, resolve));
   assert.equal(result.status, "ok");
   assert.deepEqual(events, ["stop-1", "stop-2", "configure"]);
+});
+
+test("unknown model is rejected before stopping reader tabs", async () => {
+  let listener;
+  let stopped = false;
+  const context = {
+    AbortController, setTimeout, clearTimeout,
+    chrome: {
+      runtime: { onMessage: { addListener: callback => { listener = callback; } } },
+      storage: { local: { get: async () => ({ panelLensToken: "token" }) } },
+      tabs: { query: async () => [{ id: 1 }], sendMessage: async () => { stopped = true; } }
+    },
+    fetch: async () => new Response(JSON.stringify({ status: "ok", settings: { ollama_models: ["installed-model"] } }))
+  };
+  vm.runInNewContext(fs.readFileSync(require.resolve("../service-worker.js"), "utf8"), vm.createContext(context));
+  const result = await new Promise(resolve => listener({ type: "PANELLENS_SET_MODEL", settings: { provider: "ollama", model: "e" } }, {}, resolve));
+  assert.equal(result.error.code, "model_missing");
+  assert.equal(stopped, false);
 });

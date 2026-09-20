@@ -17,6 +17,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 async function route(message) {
   if (message.type === "PANELLENS_MODEL_SETTINGS") return localFetch("/translation/settings");
   if (message.type === "PANELLENS_SET_MODEL") {
+    const selection = await localFetch("/translation/settings");
+    const model = message.settings?.model?.trim();
+    if (!model || !selection.settings?.ollama_models?.includes(model)) {
+      return { status: "error", error: { code: "model_missing", message: `Choose a model installed in Ollama. ${model ? `“${model}” was not found.` : ""}`.trim() } };
+    }
     const tabs = await chrome.tabs.query({});
     await Promise.allSettled(tabs.map(tab => chrome.tabs.sendMessage(tab.id, { type: "PANELLENS_SET_ENABLED", enabled: false })));
     return localFetch("/translation/settings", { method: "POST", body: JSON.stringify(message.settings) });
@@ -122,9 +127,13 @@ async function localFetch(path, options = {}, timeoutMs = 30000) {
     },
     body: options.body
   }, timeoutMs); } catch (error) {
+    if (path === "/images/translate" && error.message?.startsWith("Timed out after")) {
+      throw new Error(`Translation ${error.message.toLowerCase()}. The model may be stuck; cancel processing in the popup, then retry or choose another model.`);
+    }
     throw new Error(`Cannot reach the PanelLens Mac app. Open it and check Browser Setup & Models. ${error.message}`);
   }
-  if (response.status === 401) throw new Error("Connection key rejected. Copy the key from the PanelLens Mac app and reconnect.");
+  if (response.status === 401) throw new Error("Connection key rejected by the Mac app. Copy its current key and reconnect.");
+  if (response.status === 403) throw new Error("This extension request was rejected. Reload the extension installed from the Mac app.");
   const body = await response.json();
   if (path === "/health" && body.protocol_version !== 1) {
     throw new Error("PanelLens extension and Mac engine are incompatible. Install the matching app release, then reload the extension.");

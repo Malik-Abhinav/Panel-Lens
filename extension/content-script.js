@@ -2,9 +2,10 @@
   "use strict";
   const Core = globalThis.PanelLensPrefetchCore;
   const policy = { ...Core.DEFAULT_POLICY };
+  policy.lookAhead = 2;
   const state = {
     enabled: false,
-    mode: "balanced",
+    mode: "eco",
     glossary: [],
     documentId: crypto.randomUUID(),
     navigationKey: `${location.origin}${location.pathname}${location.search}`,
@@ -56,6 +57,29 @@
     }
     if (message.type === "PANELLENS_SET_GLOSSARY") {
       state.glossary = Array.isArray(message.entries) ? message.entries.slice(0, 8) : [];
+      sendResponse(snapshot());
+      return;
+    }
+    if (message.type === "PANELLENS_CANCEL_ACTIVE") {
+      for (const [id, active] of state.active) {
+        cancelRecord(active.record, "reader_cancelled");
+        state.active.delete(id);
+        active.record.generation += 1;
+        active.record.requestId = null;
+        active.record.status = "error";
+        active.record.error = "Cancelled. Retry this image when the model is responsive.";
+      }
+      state.pausedError = "Processing cancelled. Your completed translations are still visible.";
+      sendResponse(snapshot());
+      return;
+    }
+    if (message.type === "PANELLENS_RETRY_ERRORS") {
+      for (const record of state.records.values()) if (record.status === "error") {
+        record.status = "idle";
+        record.error = null;
+      }
+      state.pausedError = null;
+      requestSchedule(true);
       sendResponse(snapshot());
       return;
     }
@@ -316,12 +340,16 @@
   }
 
   function launchAvailable() {
+    if (!state.enabled || state.pausedError) return;
     const maxInFlight = state.mode === "eco" ? 1 : 3;
     while (state.active.size < maxInFlight) {
       const item = state.queue.ordered()[0];
       if (!item) break;
       state.queue.remove(item.record.id);
-      processRecord(item).catch((error) => failRecord(item.record, error));
+      const generation = item.record.generation;
+      processRecord(item).catch((error) => {
+        if (item.record.generation === generation) failRecord(item.record, error);
+      });
     }
   }
 
@@ -333,7 +361,7 @@
     const requestId = crypto.randomUUID();
     record.requestId = requestId;
     record.status = "processing";
-    state.active.set(recordId, { record, requestId, priority: item.priority });
+    state.active.set(recordId, { record, requestId, priority: item.priority, startedAt: performance.now() });
     perf("queue_exit", record, {
       priority: item.priority, queue_depth: state.queue.items.size,
       distance_to_viewport: Math.round(item.distance),
@@ -350,7 +378,7 @@
         pageTitle: document.title, context: previousContext(record), telemetryEnabled
       }
     });
-    state.active.delete(recordId);
+    if (state.active.get(recordId)?.requestId === requestId) state.active.delete(recordId);
     if (!state.enabled || !record.element.isConnected || record.generation !== generation || response?.image_id !== record.id) {
       state.metrics.discarded += 1;
       perf("result_discarded", record, { reason: "identity_mismatch" });
@@ -526,6 +554,8 @@
       ready: values.filter((record) => record.status === "ready").length,
       empty: values.filter((record) => record.status === "empty").length,
       processing: state.active.size, errors: values.filter((record) => record.status === "error").length,
+      processingSeconds: state.active.size ? Math.floor((performance.now() - Math.min(...[...state.active.values()].map(active => active.startedAt))) / 1000) : 0,
+      processingImages: [...state.active.values()].map(active => state.candidates.indexOf(active.record) + 1).filter(index => index > 0),
       queued: state.queue.items.size, metrics: { ...state.metrics,
         prefetchHitRate: state.metrics.viewportEntries ? state.metrics.prefetchHits / state.metrics.viewportEntries : 0 }
     };

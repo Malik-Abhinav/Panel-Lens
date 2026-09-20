@@ -25,7 +25,7 @@ else
   /usr/bin/codesign --verify --deep --strict "$app"
 fi
 mkdir -p "$root/build/distribution/delivery"
-zip="$root/build/distribution/delivery/PanelLens-0.3.0-macos-arm64.zip"
+zip="$root/build/distribution/delivery/PanelLens-0.3.1-macos-arm64.zip"
 /usr/bin/ditto -c -k --keepParent "$app" "$zip"
 if [ -n "${PANELLENS_NOTARY_PROFILE:-}" ]; then
   test -n "${PANELLENS_SIGN_IDENTITY:-}"

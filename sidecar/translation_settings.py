@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import threading
 import tempfile
+import urllib.error
 import urllib.request
 
 _lock = threading.RLock()
@@ -46,16 +47,21 @@ def pipeline_operation(function):
     return wrapped
 
 
-def describe() -> dict:
+def installed_models() -> list[str] | None:
     import translation_pipeline as pipeline
-    models = []
     try:
         with urllib.request.urlopen(pipeline.OLLAMA_BASE_URL + '/api/tags', timeout=2) as response:
             payload = json.load(response)
             if isinstance(payload, dict) and isinstance(payload.get('models'), list):
-                models = [item['name'] for item in payload['models'] if isinstance(item, dict) and isinstance(item.get('name'), str)]
-    except (OSError, ValueError, KeyError):
-        pass
+                return [item['name'] for item in payload['models'] if isinstance(item, dict) and isinstance(item.get('name'), str)]
+    except (OSError, ValueError, KeyError, urllib.error.URLError):
+        return None
+    return None
+
+
+def describe() -> dict:
+    import translation_pipeline as pipeline
+    models = installed_models() or []
     return {'provider': pipeline.TRANSLATION_RUNTIME, 'model': pipeline.OLLAMA_MODEL,
             'providers': ['ollama'], 'ollama_models': models,
             'runtime': pipeline.translation_runtime_status()}
@@ -68,6 +74,12 @@ def configure(value: dict) -> dict:
     model = value.get('model', pipeline.OLLAMA_MODEL)
     if provider != 'ollama' or not isinstance(model, str) or not model.strip() or len(model) > 200:
         raise ValueError('Choose an installed Ollama model or enter its name.')
+    model = model.strip()
+    models = installed_models()
+    if models is None:
+        raise ValueError('Cannot reach Ollama. Open Ollama and try again.')
+    if model not in models:
+        raise ValueError(f'Model {model!r} is not installed in Ollama. Choose a model from the installed list.')
     with _lock:
         if _active:
             raise ValueError('Translation or model loading is active. Stop reading and retry after it finishes.')
@@ -75,13 +87,13 @@ def configure(value: dict) -> dict:
         path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as stream:
             temporary = Path(stream.name)
-            json.dump({'provider': provider, 'model': model.strip()}, stream)
+            json.dump({'provider': provider, 'model': model}, stream)
         try:
             temporary.replace(path)
         finally:
             temporary.unlink(missing_ok=True)
         pipeline.TRANSLATION_RUNTIME = provider
-        pipeline.OLLAMA_MODEL = model.strip()
+        pipeline.OLLAMA_MODEL = model
         pipeline._model_state = 'cold'
         pipeline._translation_cache.clear()
         # Reserve the operation before releasing the lock so selection cannot race warmup.
@@ -94,4 +106,4 @@ def configure(value: dict) -> dict:
                 with _lock:
                     _active -= 1
         threading.Thread(target=prepare, daemon=True, name='selected-model-load').start()
-    return {'provider': provider, 'model': model.strip()}
+    return {'provider': provider, 'model': model}

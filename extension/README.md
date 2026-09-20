@@ -21,6 +21,11 @@ storage. On a comic page, click **Start on this page** and grant reader access
 when the browser asks. Keep the Mac app running; no Screen Recording permission
 is needed for browser reading. After updating PanelLens, use Show Extension Files
 and Reload on the browser's Extensions page to update a locally loaded extension.
+Use the folder the Mac app opens rather than a copied Desktop extension folder.
+The popup shows its version so you can check that Chrome loaded the updated copy.
+On Start, Chrome requests access to the current page and image sites detected at
+that point. A new image host loaded later may require restarting the reader to
+request its permission.
 
 The service binds only to `127.0.0.1:8765`, validates extension origins and the
 connection key, limits request bodies to 24 MiB, and never returns wildcard CORS.
@@ -33,6 +38,11 @@ Model changes pause active reader tabs. While reading, a five-second health chec
 also catches native-side model changes, app restarts, and disconnects, clears
 stale overlays, and asks the reader to start again. Missing/rejected keys and
 unavailable models are shown separately from page-reading errors.
+Eco is the default. The popup shows queued work, the processing image number,
+and elapsed time. Cancel and Retry keep completed results on the current page;
+Stop and model changes clear them. An installed model is not automatically a
+working translation model. Translation timeouts are shown separately from
+Ollama connection failures.
 
 For source-development only, `sidecar/http_server.py` still provides a standalone
 server. Do not run it alongside the Mac app on the same port; the app reports a

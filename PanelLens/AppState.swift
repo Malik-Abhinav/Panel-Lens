@@ -308,7 +308,7 @@ final class AppState: ObservableObject {
         do {
             try sidecarClient.revealExtension()
             NSWorkspace.shared.open(sidecarClient.extensionDirectory)
-            browserSetupMessage = "In Chrome or Edge, open Extensions, enable Developer mode, choose Load unpacked, and select this BrowserExtension folder."
+            browserSetupMessage = "Use this folder only: \(sidecarClient.extensionDirectory.path). In Chrome or Edge, remove older PanelLens copies, then Load unpacked from this folder."
         } catch { browserSetupMessage = "Could not prepare extension files: \(error.localizedDescription)" }
     }
 

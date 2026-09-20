@@ -22,7 +22,7 @@ struct SetupView: View {
             }
             VStack(alignment: .leading, spacing: 8) {
                 Text("2. Install the browser extension").font(.headline)
-                Text("Chrome and Edge are supported. Store publication is pending; this build includes extension files for Load unpacked in your browser's Extensions page.")
+                Text("Chrome and Edge are supported. Remove older PanelLens extension copies before loading the folder opened by Show Extension Files. Keep that folder in place for updates.")
                     .font(.callout).foregroundStyle(.secondary)
                 Button("Show Extension Files") { appState.revealBrowserExtension() }
                 Text("3. Connect once, then start reading").font(.headline)
@@ -57,7 +57,7 @@ struct SetupView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Updates").font(.headline)
-                Text("App and bundled engine: 0.3.0 · Extension: 0.3.0")
+                Text("App: 0.3.1 · bundled engine: 1.0.0 · Extension: 0.3.1")
                     .font(.callout).foregroundStyle(.secondary)
                 Button("Check GitHub Releases") { Task { await checkForUpdates() } }
                 if !updateMessage.isEmpty {
@@ -153,7 +153,7 @@ struct SetupView: View {
                 updateMessage = "No public PanelLens app release is available yet."
                 return
             }
-            let installed = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.3.0"
+            let installed = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.3.1"
             if tag == "app-v\(installed)" {
                 updateMessage = "App \(installed) is the latest published version."
             } else {
